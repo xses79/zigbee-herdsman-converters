@@ -2831,7 +2831,7 @@ export const definitions: DefinitionWithExtend[] = [
             },
         } satisfies Tz.Converter,
     ],
-    configure: async (device: Zh.Device, coordinatorEndpoint: Zh.Endpoint) => {
+    configure: async (device, coordinatorEndpoint) => {
         const endpoint = device.getEndpoint(1);
         await endpoint.read("genOnOff", ["startUpOnOff"]);
         try {
