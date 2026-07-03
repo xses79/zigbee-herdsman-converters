@@ -2823,7 +2823,7 @@ export const definitions: DefinitionWithExtend[] = [
             key: ["startup_on_off"],
             convertSet: async (entity: TzEntity, key: string, value: unknown, meta: TzMeta) => {
                 const map: Record<string, number> = {off: 0, on: 1, toggle: 2, previous: 255};
-                await entity.write("genOnOff", {startUpOnOff: map[value as string] ?? parseInt(value as string)});
+                await entity.write("genOnOff", {startUpOnOff: map[value as string] ?? parseInt(value as string, 10)});
                 return {state: {startup_on_off: value}};
             },
             convertGet: async (entity: TzEntity, key: string, meta: TzMeta) => {
@@ -2841,6 +2841,7 @@ export const definitions: DefinitionWithExtend[] = [
             // Not all firmware versions support reading these
         }
     },
+},
     {
         zigbeeModel: ["4512785"],
         model: "4512785",
