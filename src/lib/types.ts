@@ -189,7 +189,7 @@ export interface DefinitionMeta {
      *
      * @defaultValue false
      */
-    omitOptionalLevelParams?: boolean;
+    omitOptionalLevelAndColorParams?: boolean;
     tuyaThermostatPreset?: {[s: number]: string};
     /** Tuya specific thermostat options */
     tuyaThermostatSystemMode?: {[s: number]: string};
@@ -435,6 +435,7 @@ export namespace Tz {
         membersState?: {[s: string]: KeyValue};
         publish: Publish;
         converterOptions?: KeyValue;
+        deviceExposesChanged: () => void;
     }
     // biome-ignore lint/suspicious/noConfusingVoidType: ignored using `--suppress`
     export type ConvertSetResult = {state?: KeyValue; membersState?: {[s: string]: KeyValue}} | void;
