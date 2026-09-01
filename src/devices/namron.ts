@@ -1051,8 +1051,8 @@ const tzEdge = {
     } satisfies Tz.Converter,
 };
 // ─── Namron Zigbee Edge Thermostat END ───────────────────────────────────────
-
-{
+export const definitions: DefinitionWithExtend[] = [
+    {
         zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
         model: "4566702",
         vendor: "Namron",
