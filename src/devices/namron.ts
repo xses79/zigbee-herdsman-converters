@@ -772,11 +772,11 @@ const tzEdge = {
             };
             if (value === "eco") {
                 await clearVacationMode();
-                await entity.request("hvacThermostat", 0x08, Buffer.from([0x01]), {direction: 0});
+                await (entity as any).request("hvacThermostat", 0x08, Buffer.from([0x01]), {direction: 0});
             } else {
-                await entity.request("hvacThermostat", 0x08, Buffer.from([0x00]), {direction: 0});
+                await (entity as any).request("hvacThermostat", 0x08, Buffer.from([0x00]), {direction: 0});
                 await clearVacationMode();
-                await entity.request("hvacThermostat", 0x07, Buffer.from([value === "schedule" ? 0x01 : 0x00]), {direction: 0});
+                await (entity as any).request("hvacThermostat", 0x07, Buffer.from([value === "schedule" ? 0x01 : 0x00]), {direction: 0});
             }
             return {state: {programming_operation_mode: value}};
         },
