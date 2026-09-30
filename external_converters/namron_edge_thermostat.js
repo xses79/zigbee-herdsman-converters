@@ -1,4 +1,4 @@
-// Namron Zigbee Edge Thermostat - external converter (v3.39-test)
+// Namron Zigbee Edge Thermostat - external converter (v3.39.1-test)
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // v3.39-test: results from v3.38-test showed 0x8006 stays 0 when the panel's
@@ -94,6 +94,9 @@ const DataType = {
 // Last scan per device, for scan_changes.
 const scanStore = new Map();
 
+// Degree sign without a backslash escape (the Z2M converter editor mangles escapes).
+const DEG = String.fromCharCode(176);
+
 const TEST = "[namron_edge_test]";
 const DEBUG = "[namron_edge_debug]";
 
@@ -157,9 +160,14 @@ function smartDateDecode(value) {
 }
 
 function dateToYymmdd(value) {
-    const match = String(value).match(/^20(\d{2})-(\d{2})-(\d{2})$/);
-    if (!match) throw new Error(`Invalid date: ${value}. Use YYYY-MM-DD format, e.g. 2026-06-05.`);
-    return Number(match[1] + match[2] + match[3]);
+    // Plain string parsing (no regex): the Z2M converter editor mangles regex literals.
+    const parts = String(value).split("-");
+    const ok = parts.length === 3 && parts[0].length === 4 && parts[0].startsWith("20") && parts[1].length === 2 && parts[2].length === 2;
+    const digits = ok ? parts[0].slice(2) + parts[1] + parts[2] : "";
+    if (!ok || Number.isNaN(Number(digits)) || digits.includes(" ")) {
+        throw new Error(`Invalid date: ${value}. Use YYYY-MM-DD format, e.g. 2026-06-05.`);
+    }
+    return Number(digits);
 }
 
 function deriveEdgeThermostatMode(frost, vacationMode, sensorMode, progOpMode, boostTimeSet) {
@@ -242,7 +250,7 @@ async function readThenWriteEdgeHvac(entity, attr, value, type) {
 const testAttrs = {
     32771: "hysteresis",
     32774: "control_method/fault",
-    32805: "max_heat_temp (\u00b0C x10)",
+    32805: `max_heat_temp (${DEG}C x10)`,
     32806: "unknown: max_heat_temp_f or pid_kp",
     32807: "unknown: min_cool_temp or pid_ki",
     32808: "unknown: min_cool_temp_f or pid_kd",
@@ -321,7 +329,7 @@ const fzEdge = {
                         result[`raw_${id.toString(16)}`] = raw;
                         const asF = raw / 10;
                         const asC = Math.round((((asF - 32) * 5) / 9) * 10) / 10;
-                        log(`${TEST} ${hex(id)} raw=${raw} -> as \u00b0F/10: ${asF} \u00b0F (= ${asC} \u00b0C) | as PID /1000: ${raw / 1000}`);
+                        log(`${TEST} ${hex(id)} raw=${raw} -> as ${DEG}F/10: ${asF} ${DEG}F (= ${asC} ${DEG}C) | as PID /1000: ${raw / 1000}`);
                         break;
                     }
                 }
@@ -493,7 +501,7 @@ const tzEdge = {
             const raw = Math.round(num * 2);
             // Real type confirmed on hardware: ENUM8 (UINT8/INT8 give INVALID_DATA_TYPE).
             await writeEdgeHvacDebug(entity, 0x8003, raw, DataType.ENUM8, "hysteresis");
-            log(`${TEST} hysteresis set to ${num} \u00b0C (raw ${raw}), reading back...`);
+            log(`${TEST} hysteresis set to ${num} ${DEG}C (raw ${raw}), reading back...`);
             // Genuine read-back - the value logged by namron_private is what the device stored.
             await new Promise((resolve) => setTimeout(resolve, 1000));
             try {
@@ -689,7 +697,7 @@ const edgeModernFields = [
         cluster: "hvacThermostat",
         attribute: {ID: 0x8025, type: DataType.INT16},
         description: "Upper limit for the heating setpoint.",
-        unit: "\u00b0C",
+        unit: `${DEG}C`,
         valueMin: 15,
         valueMax: 35,
         valueStep: 0.5,
@@ -701,7 +709,7 @@ const edgeModernFields = [
         cluster: "hvacThermostat",
         attribute: {ID: 0x8013, type: DataType.INT16},
         description: "Target temperature while on vacation.",
-        unit: "\u00b0C",
+        unit: `${DEG}C`,
         valueMin: 5,
         valueMax: 35,
         valueStep: 0.5,
@@ -761,7 +769,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter v3.39-test)",
+    description: "Zigbee Edge Thermostat (external converter v3.39.1-test)",
     ota: true,
     extend: [m.humidity(), edgeThermostatCommands(), ...edgeModernFields],
 
@@ -914,7 +922,7 @@ const definition = {
         e.numeric("control_method_raw", ea.STATE_GET).withLabel("Control method raw (0x8006, test)"),
         e
             .numeric("hysteresis", ea.ALL)
-            .withUnit("\u00b0C")
+            .withUnit(`${DEG}C`)
             .withValueMin(0.5)
             .withValueMax(10)
             .withValueStep(0.5)
