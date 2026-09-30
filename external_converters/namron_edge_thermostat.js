@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit aba5c76), i.e. exactly what goes into the pull request, for use until
+// (commit 07973d7), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -567,10 +567,30 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo aba5c76)",
+    description: "Zigbee Edge Thermostat (external converter, repo 07973d7)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
+        // The device accepts a calibration of -10 to +10 deg C (confirmed on the device), wider than the ZCL default of +/-2.5 deg C.
+        // Same as m.customLocalTemperatureCalibrationRange({min: -10, max: 10}) in the repo, inlined so this
+        // file also works on Z2M versions that do not have that helper yet.
+        m.deviceAddCustomCluster("hvacThermostat", {
+            ID: 0x0201,
+            name: "hvacThermostat",
+            attributes: {
+                localTemperatureCalibration: {
+                    name: "localTemperatureCalibration",
+                    ID: 0x0010,
+                    type: DataType.INT8,
+                    write: true,
+                    min: -100,
+                    max: 100,
+                    default: 0,
+                },
+            },
+            commands: {},
+            commandsResponse: {},
+        }),
         // The week program changed on the device is not reported, so read it periodically.
         m.poll({
             key: "namron_edge_week_program_poll",
@@ -696,7 +716,7 @@ const definition = {
             .withSetpoint("occupied_heating_setpoint", 5, 35, 0.5)
             .withSystemMode(["off", "heat", "cool"])
             .withRunningState(["idle", "heat", "cool"])
-            .withLocalTemperatureCalibration(-3, 3, 0.1)
+            .withLocalTemperatureCalibration(-10, 10, 0.1)
             .withPiHeatingDemand(),
         // Kept separate from climate() (not chained via withSetpoint()):
         // exposing both heating and cooling setpoints on the same
