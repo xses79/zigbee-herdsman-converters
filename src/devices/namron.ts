@@ -521,6 +521,146 @@ const tzLocalSimplifyDimmer4512791 = {
     } satisfies Tz.Converter,
 };
 // End Simplify Dimmer (4512791)
+// ─── Namron Simplify Thermostat (4512795/4512796) ────────────────────────────
+// systemMode (0x001C) is vendor-defined as Work_mode, same tags as the week program mode nibble.
+const simplifyThermostatPresetLookup: KeyValue = {manual: 0, home: 1, away: 2, sleep: 3, holiday: 4};
+// hvacRelayState (0x0029) is vendor-defined as Work_state.
+const simplifyThermostatRunningStateLookup: KeyValue = {heat: 0x00, idle: 0x10};
+const SIMPLIFY_EPOCH_OFFSET = 946684800; // ZCL UTCTime counts seconds from 2000-01-01
+
+const fzSimplifyThermostat = {
+    thermostat: {
+        cluster: "hvacThermostat",
+        type: ["attributeReport", "readResponse"],
+        convert: (model, msg, publish, options, meta) => {
+            const result: KeyValue = {};
+            const data = msg.data;
+            if (data.localTemp !== undefined && data.localTemp !== -0x8000) {
+                result.local_temperature = utils.precisionRound(data.localTemp / 100, 2);
+            }
+            if (data.localTemperatureCalibration !== undefined) {
+                result.local_temperature_calibration = utils.precisionRound(data.localTemperatureCalibration / 10, 1);
+            }
+            if (data.occupiedHeatingSetpoint !== undefined) {
+                result.occupied_heating_setpoint = utils.precisionRound(data.occupiedHeatingSetpoint / 100, 2);
+            }
+            if (data.pIHeatingDemand !== undefined) {
+                result.pi_heating_demand = data.pIHeatingDemand;
+            }
+            if (data.systemMode !== undefined) {
+                const preset = utils.getKey(simplifyThermostatPresetLookup, data.systemMode, undefined, Number);
+                if (preset !== undefined) result.preset = preset;
+            }
+            if (data.runningState !== undefined) {
+                const runningState = utils.getKey(simplifyThermostatRunningStateLookup, data.runningState, undefined, Number);
+                if (runningState !== undefined) result.running_state = runningState;
+            }
+            return result;
+        },
+    } satisfies Fz.Converter<"hvacThermostat", undefined, ["attributeReport", "readResponse"]>,
+    system_mode: {
+        cluster: "genOnOff",
+        type: ["attributeReport", "readResponse"],
+        convert: (model, msg, publish, options, meta) => {
+            if (msg.data.onOff !== undefined) {
+                return {system_mode: msg.data.onOff ? "heat" : "off"};
+            }
+        },
+    } satisfies Fz.Converter<"genOnOff", undefined, ["attributeReport", "readResponse"]>,
+};
+
+const tzSimplifyThermostat = {
+    // On/Off cluster is the Shut_down function point, exposed as climate system_mode off/heat.
+    system_mode: {
+        key: ["system_mode"],
+        convertSet: async (entity, key, value, meta) => {
+            utils.validateValue(value, ["off", "heat"]);
+            await entity.command("genOnOff", value === "off" ? "off" : "on", {}, utils.getOptions(meta.mapped, entity));
+            return {state: {system_mode: value}};
+        },
+        convertGet: async (entity, key, meta) => {
+            await entity.read("genOnOff", ["onOff"]);
+        },
+    } satisfies Tz.Converter,
+    preset: {
+        key: ["preset"],
+        convertSet: async (entity, key, value, meta) => {
+            await entity.write("hvacThermostat", {systemMode: utils.getFromLookup(value, simplifyThermostatPresetLookup) as number});
+            return {state: {preset: value}};
+        },
+        convertGet: async (entity, key, meta) => {
+            await entity.read("hvacThermostat", ["systemMode"]);
+        },
+    } satisfies Tz.Converter,
+    sync_time: {
+        key: ["sync_time"],
+        convertSet: async (entity, key, value, meta) => {
+            const ts = Math.round(Date.now() / 1000) - SIMPLIFY_EPOCH_OFFSET;
+            await entity.write("hvacThermostat", {[0x800b]: {value: ts, type: Zcl.DataType.UINT32}});
+            await entity.write("hvacThermostat", {[0x800a]: {value: 1, type: Zcl.DataType.BOOLEAN}});
+            return {};
+        },
+    } satisfies Tz.Converter,
+};
+
+const simplifyThermostatTemperature = (name: string, attribute: number, description: string, min: number, max: number, scale: number) =>
+    m.numeric({
+        name,
+        cluster: "hvacThermostat",
+        attribute: {ID: attribute, type: Zcl.DataType.INT16},
+        description,
+        unit: "°C",
+        valueMin: min,
+        valueMax: max,
+        valueStep: 0.5,
+        scale,
+        entityCategory: "config",
+    });
+
+const simplifyThermostatSwitch = (name: string, attribute: number, description: string, access: "STATE_GET" | "ALL" = "ALL") =>
+    m.binary({
+        name,
+        cluster: "hvacThermostat",
+        attribute: {ID: attribute, type: Zcl.DataType.BOOLEAN},
+        valueOn: ["ON", 1],
+        valueOff: ["OFF", 0],
+        description,
+        access,
+        entityCategory: access === "ALL" ? "config" : "diagnostic",
+    });
+
+const simplifyThermostatEnum = (name: string, attribute: number, lookup: KeyValue, description: string) =>
+    m.enumLookup({
+        name,
+        cluster: "hvacThermostat",
+        attribute: {ID: attribute, type: Zcl.DataType.ENUM8},
+        lookup,
+        description,
+        entityCategory: "config",
+    });
+
+const simplifyThermostatNumber = (
+    name: string,
+    attribute: number,
+    type: Zcl.DataType,
+    description: string,
+    unit: string,
+    min: number,
+    max: number,
+    step = 1,
+) =>
+    m.numeric({
+        name,
+        cluster: "hvacThermostat",
+        attribute: {ID: attribute, type},
+        description,
+        unit,
+        valueMin: min,
+        valueMax: max,
+        valueStep: step,
+        entityCategory: "config",
+    });
+// ─── Namron Simplify Thermostat END ──────────────────────────────────────────
 // ─── Namron Zigbee Edge Thermostat (4566702/4566703/4512783/4512784) ──────────
 const EDGE_EPOCH_OFFSET = 946684800; // seconds between 1970-01-01 and 2000-01-01
 
@@ -3086,6 +3226,145 @@ export const definitions: DefinitionWithExtend[] = [
                 await endpoint.read("genLevelCtrl", [0xb000]);
             } catch (_e) {
                 // Not all firmware versions support reading these
+            }
+        },
+    },
+    {
+        zigbeeModel: ["4512795", "4512796"],
+        model: "4512795",
+        vendor: "Namron",
+        description: "Simplify thermostat",
+        whiteLabel: [{vendor: "Namron", model: "4512796", description: "Simplify thermostat (black)", fingerprint: [{modelID: "4512796"}]}],
+        ota: true,
+        fromZigbee: [fzSimplifyThermostat.thermostat, fzSimplifyThermostat.system_mode],
+        toZigbee: [
+            tzSimplifyThermostat.system_mode,
+            tzSimplifyThermostat.preset,
+            tzSimplifyThermostat.sync_time,
+            tz.thermostat_local_temperature,
+            tz.thermostat_local_temperature_calibration,
+            tz.thermostat_occupied_heating_setpoint,
+            tz.thermostat_pi_heating_demand,
+            tz.thermostat_running_state,
+        ],
+        exposes: [
+            e
+                .climate()
+                .withSystemMode(["off", "heat"], ea.ALL)
+                .withPreset(Object.keys(simplifyThermostatPresetLookup))
+                .withLocalTemperature()
+                .withSetpoint("occupied_heating_setpoint", 5, 40, 0.5)
+                .withLocalTemperatureCalibration(-5, 5, 0.5)
+                .withRunningState(["idle", "heat"])
+                .withPiHeatingDemand(),
+            e.enum("sync_time", ea.SET, ["sync"]).withDescription("Synchronize the thermostat clock with the current time").withCategory("config"),
+        ],
+        extend: [
+            m.identify(),
+            m.humidity(),
+            m.electricityMeter(),
+            m.binary({
+                name: "child_lock",
+                cluster: "hvacUserInterfaceCfg",
+                attribute: "keypadLockout",
+                valueOn: ["LOCK", 1],
+                valueOff: ["UNLOCK", 0],
+                description: "Enables/disables physical input on the device",
+            }),
+            simplifyThermostatSwitch("window_open_check", 0x8000, "Enable open window detection"),
+            simplifyThermostatSwitch("window_open", 0x8002, "Open window detected", "STATE_GET"),
+            simplifyThermostatSwitch("frost_protection", 0x8001, "Enable frost protection"),
+            simplifyThermostatSwitch("frost_protection_active", 0x8061, "Frost protection currently active", "STATE_GET"),
+            simplifyThermostatSwitch("auto_time", 0x8022, "Automatically set time"),
+            simplifyThermostatSwitch("adaptive_function", 0x8035, "Adaptive heating"),
+            simplifyThermostatSwitch("idle_screen", 0x803d, "Show idle screen"),
+            simplifyThermostatSwitch("schedule", 0x803f, "Enable week schedule"),
+            m.binary({
+                name: "system_lock",
+                cluster: "hvacThermostat",
+                attribute: {ID: 0x803e, type: Zcl.DataType.ENUM8},
+                valueOn: ["ON", 1],
+                valueOff: ["OFF", 0],
+                description: "System lock",
+                entityCategory: "config",
+            }),
+            simplifyThermostatEnum("work_days", 0x8003, {"5+2": 0, "6+1": 1, "7+0": 2, "0+7": 3}, "Work days used by the week schedule"),
+            simplifyThermostatEnum("sensor_mode", 0x8004, {air: 0, floor: 1, external: 2}, "Temperature sensor used for regulation"),
+            simplifyThermostatEnum(
+                "schedule_snooze",
+                0x8040,
+                {none: 0, "3h": 1, "6h": 2, "12h": 3, day: 4, week: 5},
+                "Temporarily pause the week schedule",
+            ),
+            simplifyThermostatEnum("control_mode", 0x8041, {thermostat: 0, power_regulator: 1}, "Thermostat or power regulator mode"),
+            simplifyThermostatEnum("theme", 0x8044, {dark: 0, light: 1}, "Display theme"),
+            simplifyThermostatEnum(
+                "floor_protection_type",
+                0x8046,
+                {none: 0, wood: 1, stone: 2, custom: 3},
+                "Floor type, determines the floor temperature limit",
+            ),
+            simplifyThermostatTemperature("holiday_temperature", 0x8013, "Setpoint in holiday mode", 5, 40, 100),
+            simplifyThermostatTemperature("home_temperature", 0x8039, "Setpoint in home mode", 5, 40, 10),
+            simplifyThermostatTemperature("away_temperature", 0x8036, "Setpoint in away mode", 5, 40, 10),
+            simplifyThermostatTemperature("sleep_temperature", 0x803b, "Setpoint in sleep mode", 5, 40, 10),
+            simplifyThermostatTemperature(
+                "floor_temperature_limit",
+                0x803c,
+                "Maximum floor temperature (only with custom floor protection type)",
+                25,
+                40,
+                10,
+            ),
+            simplifyThermostatTemperature("hysteresis", 0x8045, "Hysteresis", 0.5, 5, 10),
+            m.numeric({
+                name: "frost_protection_temperature",
+                cluster: "hvacThermostat",
+                attribute: {ID: 0x802b, type: Zcl.DataType.UINT8},
+                description: "Frost protection setpoint",
+                unit: "°C",
+                valueMin: 5,
+                valueMax: 10,
+                valueStep: 0.5,
+                scale: 10,
+                entityCategory: "config",
+            }),
+            simplifyThermostatNumber("active_backlight", 0x8005, Zcl.DataType.UINT8, "Display brightness when active", "%", 10, 100),
+            simplifyThermostatNumber("idle_backlight", 0x8034, Zcl.DataType.INT16, "Display brightness when idle", "%", 10, 100),
+            simplifyThermostatNumber("screen_on_time", 0x8029, Zcl.DataType.ENUM8, "Screen timeout, 0 = always on", "s", 0, 60),
+            simplifyThermostatNumber("regulator_cycle", 0x8007, Zcl.DataType.UINT8, "Power regulator cycle duration", "min", 1, 30),
+            simplifyThermostatNumber("regulator_percentage", 0x801d, Zcl.DataType.INT16, "Heating level in power regulator mode", "%", 10, 100, 10),
+            simplifyThermostatNumber("curing_time", 0x803a, Zcl.DataType.INT16, "Floor curing, heating is blocked while curing", "days", 0, 40),
+            m.numeric({
+                name: "fault",
+                cluster: "hvacThermostat",
+                attribute: {ID: 0x8006, type: Zcl.DataType.BITMAP8},
+                description: "Fault bits (sensor, communication, over temperature, overload)",
+                access: "STATE_GET",
+                entityCategory: "diagnostic",
+            }),
+            m.text({
+                name: "mcu_version",
+                cluster: "hvacThermostat",
+                attribute: {ID: 0x8052, type: Zcl.DataType.CHAR_STR},
+                description: "MCU firmware version",
+                access: "STATE_GET",
+                entityCategory: "diagnostic",
+            }),
+        ],
+        configure: async (device, coordinatorEndpoint) => {
+            const endpoint = device.getEndpoint(1);
+            await reporting.bind(endpoint, coordinatorEndpoint, ["genOnOff", "hvacThermostat"]);
+            await reporting.onOff(endpoint);
+            await reporting.thermostatTemperature(endpoint);
+            await reporting.thermostatOccupiedHeatingSetpoint(endpoint);
+            await reporting.thermostatPIHeatingDemand(endpoint);
+            await reporting.thermostatSystemMode(endpoint);
+            await endpoint.read("hvacThermostat", ["localTemperatureCalibration", "runningState"]);
+            try {
+                await tzSimplifyThermostat.sync_time.convertSet(endpoint, "sync_time", "sync", undefined);
+            } catch (_e) {
+                // Time sync is best effort, don't fail configuration
             }
         },
     },
