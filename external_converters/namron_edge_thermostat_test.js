@@ -14,6 +14,12 @@
 //    which ones the device supports (simplify_probe_summary, details in simplify_probe).
 //    0x8030 (Factory_reset) and 0x8051 (Pin_set) are deliberately NOT touched.
 //
+// 3. Week program WRITE TEST (v3): "week_program_write" sends command 0x07 on cluster 0xE002 to the
+//    device with the last program the device itself sent (from week_program_raw):
+//      - "resend_current": sends it back unchanged (harmless, tests that the device accepts it)
+//      - "test_plus_1": same program, but weekday period 1 is 1.0 deg C warmer
+//    Watch the device screen and week_program_schedule afterwards.
+//
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Log lines are prefixed [namron_edge_test].
 
@@ -653,6 +659,33 @@ function describeWeekProgram(entries) {
     return `Weekdays: ${weekday} | Weekend: ${weekend}`;
 }
 
+// Private cluster 0xE002 registered with command 0x07 in both directions, as 32 x UINT8, so the
+// week program can be sent to the device (and frames from it are parsed instead of arriving raw).
+const weekProgramParams = [];
+for (let i = 0; i < 32; i++) weekProgramParams.push({name: `p${i}`, type: DataType.UINT8});
+const WEEK_CLUSTER = "namronEdgeWeekProgram";
+function weekProgramCluster() {
+    return m.deviceAddCustomCluster(WEEK_CLUSTER, {
+        ID: 0xe002,
+        name: WEEK_CLUSTER,
+        attributes: {},
+        commands: {weekProgram: {ID: 0x07, name: "weekProgram", parameters: weekProgramParams}},
+        commandsResponse: {weekProgram: {ID: 0x07, name: "weekProgram", parameters: weekProgramParams}},
+    });
+}
+
+function weekProgramResult(payload) {
+    const entries = parseWeekProgram(payload);
+    const schedule = describeWeekProgram(entries);
+    testLog(`week program: ${schedule}`);
+    return {
+        week_program_schedule: schedule,
+        week_program_entries: entries,
+        week_program_raw: toHex(payload),
+        week_program_updated: new Date().toLocaleString(),
+    };
+}
+
 const fzTest = {
     // Unsolicited frames on the private cluster 0xE002 (57346). Z2M has no cluster definition
     // for it, so they arrive as "raw" with the full ZCL frame (header included).
@@ -672,21 +705,27 @@ const fzTest = {
             if (command !== 0x07) {
                 return {week_program_other_frame: `command 0x${command.toString(16)}: ${toHex(payload)}`};
             }
-            const entries = parseWeekProgram(payload);
-            const schedule = describeWeekProgram(entries);
-            testLog(`week program: ${schedule}`);
-            return {
-                week_program_schedule: schedule,
-                week_program_entries: entries,
-                week_program_raw: toHex(payload),
-                week_program_updated: new Date().toLocaleString(),
-            };
+            return weekProgramResult(payload);
+        },
+    },
+
+    // Once the cluster is registered, the device's frames are parsed into p0..p31.
+    week_program_parsed: {
+        cluster: WEEK_CLUSTER,
+        type: ["commandWeekProgram"],
+        convert: (model, msg) => {
+            const payload = [];
+            for (let i = 0; i < 32; i++) payload.push(Number(msg.data?.[`p${i}`] ?? 0));
+            testLog(`0xE002 weekProgram (parsed): ${toHex(payload)}`);
+            return weekProgramResult(payload);
         },
     },
 };
 
 // Same converter keyed on the cluster ID as a string, in case the Z2M version passes it that way.
 fzTest.week_program_str = {...fzTest.week_program, cluster: "57346"};
+// Raw frames that fail to parse arrive under the registered cluster name.
+fzTest.week_program_named_raw = {...fzTest.week_program, cluster: WEEK_CLUSTER};
 
 const tzTest = {
     simplify_probe: {
@@ -714,6 +753,41 @@ const tzTest = {
         },
     },
 
+    week_program_write: {
+        key: ["week_program_write"],
+        convertSet: async (entity, key, value, meta) => {
+            const hex = meta.state?.week_program_raw;
+            if (typeof hex !== "string") {
+                throw new Error("No week program received yet: change something in the week program on the device first");
+            }
+            const bytes = hex.split(" ").map((h) => Number.parseInt(h, 16));
+            if (bytes.length !== 32 || bytes.some((b) => Number.isNaN(b))) throw new Error(`Unexpected week_program_raw: ${hex}`);
+            if (value === "test_plus_1") {
+                // Weekday period 1: bytes 2-3, temperature x10 big-endian, mode tag in the high nibble of byte 2.
+                const tag = bytes[2] & 0xf0;
+                const temp = Math.min((((bytes[2] & 0x0f) << 8) | bytes[3]) + 10, 400);
+                bytes[2] = tag | ((temp >> 8) & 0x0f);
+                bytes[3] = temp & 0xff;
+            } else if (value !== "resend_current") {
+                throw new Error(`Invalid week_program_write: ${value}`);
+            }
+            const payload = {};
+            bytes.forEach((b, i) => {
+                payload[`p${i}`] = b;
+            });
+            const sent = describeWeekProgram(parseWeekProgram(bytes));
+            testLog(`week_program_write ${value}: sending ${toHex(bytes)} (${sent})`);
+            try {
+                await entity.command(WEEK_CLUSTER, "weekProgram", payload, {disableDefaultResponse: false});
+                testLog("week_program_write: device accepted the command");
+            } catch (err) {
+                testLog(`week_program_write FAILED: ${err?.message ?? err}`);
+                throw err;
+            }
+            return {state: {week_program_write_last: `${new Date().toLocaleString()} ${value}: ${sent}`}};
+        },
+    },
+
     week_program_read: {
         key: ["week_program_read"],
         convertSet: async (entity) => {
@@ -736,10 +810,11 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v2)",
+    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v3)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
+        weekProgramCluster(),
         // The week program changed on the device is not reported, so read it periodically.
         m.poll({
             key: "namron_edge_week_program_poll",
@@ -759,10 +834,20 @@ const definition = {
         m.humidity(),
         m.electricityMeter({voltage: false, configureReporting: false}),
     ],
-    fromZigbee: [fzEdge.basic, fz.thermostat, fzEdge.edge_custom, fz.hvac_user_interface, fzTest.week_program, fzTest.week_program_str],
+    fromZigbee: [
+        fzEdge.basic,
+        fz.thermostat,
+        fzEdge.edge_custom,
+        fz.hvac_user_interface,
+        fzTest.week_program,
+        fzTest.week_program_str,
+        fzTest.week_program_named_raw,
+        fzTest.week_program_parsed,
+    ],
     toZigbee: [
         tzTest.simplify_probe,
         tzTest.week_program_read,
+        tzTest.week_program_write,
         tzEdge.system_mode,
         tz.thermostat_occupied_heating_setpoint,
         tz.thermostat_occupied_cooling_setpoint,
@@ -865,6 +950,10 @@ const definition = {
         e.text("week_program_schedule", ea.STATE).withDescription("TEST: week program sent by the device (cluster 0xE002, command 0x07)."),
         e.text("week_program_raw", ea.STATE).withDescription("TEST: raw bytes of the last week program frame."),
         e.text("week_program_updated", ea.STATE).withDescription("TEST: when the last week program frame arrived."),
+        e
+            .enum("week_program_write", ea.SET, ["resend_current", "test_plus_1"])
+            .withDescription("TEST: send the last received week program to the device (unchanged, or weekday period 1 +1.0 deg C)."),
+        e.text("week_program_write_last", ea.STATE).withDescription("TEST: last week program write sent."),
         e.enum("week_program_read", ea.SET, ["read"]).withDescription("TEST: read attribute 0x0007 of cluster 0xE002."),
         e.text("week_program_attr7", ea.STATE).withDescription("TEST: result of the 0xE002 attribute 0x0007 read."),
         e.enum("simplify_probe", ea.SET, ["probe"]).withDescription("TEST: read all unconfirmed Simplify attributes, one at a time."),
