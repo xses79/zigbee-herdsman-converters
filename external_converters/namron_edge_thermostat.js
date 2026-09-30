@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 07973d7), i.e. exactly what goes into the pull request, for use until
+// (commit d7aca46), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -133,7 +133,26 @@ async function writeThenReadEdgeHvac(entity, attr, value, type, readAttrs) {
         await entity.read("hvacThermostat", readAttrs);
     } catch (_) {}
 }
+// programingOperMode is a bitmap on this device: bit 0 = schedule, bit 2 = eco. It reports 5 (schedule + eco),
+// which fz.thermostat's lookup (0, 1, 3, 4) rejects with an exception that also drops the rest of the message.
+function edgeProgrammingOperationMode(value) {
+    if (value & 0x04) return "eco";
+    if (value & 0x01) return "schedule";
+    return "setpoint";
+}
 const fzEdge = {
+    thermostat: {
+        cluster: "hvacThermostat",
+        type: ["attributeReport", "readResponse"],
+        convert: (model, msg, publish, options, meta) => {
+            const {programingOperMode, ...rest} = msg.data;
+            const result = Object.keys(rest).length > 0 ? (fz.thermostat.convert(model, {...msg, data: rest}, publish, options, meta) ?? {}) : {};
+            if (programingOperMode !== undefined) {
+                result.programming_operation_mode = edgeProgrammingOperationMode(programingOperMode);
+            }
+            return result;
+        },
+    },
     basic: {
         cluster: "genBasic",
         type: ["attributeReport", "readResponse"],
@@ -258,6 +277,10 @@ const fzEdge = {
                 }
             }
             const merged = Object.assign({}, meta?.state ?? {}, result);
+            // fzEdge.thermostat parses programingOperMode from the same message, but its result is not in meta.state yet.
+            if (msg.data.programingOperMode !== undefined) {
+                merged.programming_operation_mode = edgeProgrammingOperationMode(msg.data.programingOperMode);
+            }
             result["thermostat_mode"] = deriveEdgeThermostatMode(
                 merged["frost"],
                 merged["vacation_mode"],
@@ -567,7 +590,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 07973d7)",
+    description: "Zigbee Edge Thermostat (external converter, repo d7aca46)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -610,7 +633,7 @@ const definition = {
         m.humidity(),
         m.electricityMeter({voltage: false, configureReporting: false}),
     ],
-    fromZigbee: [fzEdge.basic, fz.thermostat, fzEdge.edge_custom, fz.hvac_user_interface],
+    fromZigbee: [fzEdge.basic, fzEdge.thermostat, fzEdge.edge_custom, fz.hvac_user_interface],
     toZigbee: [
         tzEdge.system_mode,
         tz.thermostat_occupied_heating_setpoint,
