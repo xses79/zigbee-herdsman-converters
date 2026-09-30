@@ -20,6 +20,15 @@
 //      - "test_plus_1": same program, but weekday period 1 is 1.0 deg C warmer
 //    Watch the device screen and week_program_schedule afterwards.
 //
+// 4. v4 - attribute 0x0007 of cluster 0xE002 follows the Wake temperature (00 00 [temp x10] 08 00).
+//    "week_attr7_write" WRITES that attribute (CHAR_STRING, raw bytes), then reads it back:
+//      - "wake_plus_1": the same 5-byte form, Wake temperature +1.0 deg C
+//      - "full_program_plus_1": the whole 32-byte program (as the device sends it), Wake +1.0 deg C
+//    "private_scan" lists the device's clusters and reads every attribute (0x0000-0x003f and 0xfffd)
+//    of its private clusters (0xE000 and up), one at a time, and reports what changed since the
+//    previous scan (private_scan_changes). Use it to look for hysteresis: scan, change hysteresis on
+//    the device, scan again.
+//
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Log lines are prefixed [namron_edge_test].
 
@@ -727,6 +736,27 @@ fzTest.week_program_str = {...fzTest.week_program, cluster: "57346"};
 // Raw frames that fail to parse arrive under the registered cluster name.
 fzTest.week_program_named_raw = {...fzTest.week_program, cluster: WEEK_CLUSTER};
 
+// Last private scan per device, for private_scan_changes.
+const privateScanStore = new Map();
+
+function programBytesFromState(meta) {
+    const hex = meta.state?.week_program_raw;
+    if (typeof hex !== "string") throw new Error("No week program received yet: change something in the week program on the device first");
+    const bytes = hex.split(" ").map((h) => Number.parseInt(h, 16));
+    if (bytes.length !== 32 || bytes.some((b) => Number.isNaN(b))) throw new Error(`Unexpected week_program_raw: ${hex}`);
+    return bytes;
+}
+
+// Weekday period 1 (Wake): temperature x10 in bytes 2-3, mode tag in the high nibble of byte 2.
+function wakePlusOne(bytes) {
+    const out = bytes.slice();
+    const tag = out[2] & 0xf0;
+    const temp = Math.min((((out[2] & 0x0f) << 8) | out[3]) + 10, 400);
+    out[2] = tag | ((temp >> 8) & 0x0f);
+    out[3] = temp & 0xff;
+    return out;
+}
+
 const tzTest = {
     simplify_probe: {
         key: ["simplify_probe"],
@@ -788,6 +818,97 @@ const tzTest = {
         },
     },
 
+    week_attr7_write: {
+        key: ["week_attr7_write"],
+        convertSet: async (entity, key, value, meta) => {
+            const program = wakePlusOne(programBytesFromState(meta));
+            let content;
+            if (value === "wake_plus_1") {
+                // Same form as the device reports: 00 [temp hi] [temp lo] [next hour] [next minute]
+                content = [0x00, program[2], program[3], program[4], program[5]];
+            } else if (value === "full_program_plus_1") {
+                content = program;
+            } else {
+                throw new Error(`Invalid week_attr7_write: ${value}`);
+            }
+            // CHAR_STRING with raw bytes: herdsman writes a byte array as-is, so the length byte goes first.
+            const raw = Buffer.from([content.length, ...content]);
+            testLog(`week_attr7_write ${value}: writing 0xE002/0x0007 = ${toHex(content)}`);
+            let result;
+            try {
+                await entity.write(WEEK_CLUSTER, {7: {value: raw, type: 0x42}}, {disableDefaultResponse: false});
+                result = "write OK";
+            } catch (err) {
+                result = `write FAILED: ${err?.message ?? err}`;
+            }
+            testLog(`week_attr7_write ${value}: ${result}`);
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            let readBack;
+            try {
+                const data = await entity.read(WEEK_CLUSTER, [7]);
+                const v = data?.[7] ?? data?.["7"];
+                readBack = typeof v === "string" ? `${v.length} chars (see log for raw bytes)` : JSON.stringify(v);
+            } catch (err) {
+                readBack = `read FAILED: ${err?.message ?? err}`;
+            }
+            testLog(`week_attr7_write ${value}: read back ${readBack}`);
+            return {state: {week_attr7_write_last: `${new Date().toLocaleString()} ${value}: ${result}; read back ${readBack}`}};
+        },
+    },
+
+    private_scan: {
+        key: ["private_scan"],
+        convertSet: async (entity, key, value, meta) => {
+            const inputs = entity.inputClusters ?? [];
+            const outputs = entity.outputClusters ?? [];
+            const clusterList = `in: ${inputs.map((c) => `0x${c.toString(16)}`).join(", ")} | out: ${outputs.map((c) => `0x${c.toString(16)}`).join(", ")}`;
+            testLog(`private_scan clusters ${clusterList}`);
+            const privateClusters = [...new Set([...inputs, ...outputs])].filter((c) => c >= 0xe000);
+            if (!privateClusters.includes(0xe002)) privateClusters.push(0xe002);
+            const attrIds = [];
+            for (let id = 0; id <= 0x3f; id++) attrIds.push(id);
+            attrIds.push(0xfffd);
+            const current = {};
+            for (const cluster of privateClusters) {
+                for (const id of attrIds) {
+                    try {
+                        const data = await entity.read(cluster, [id]);
+                        const v = data?.[id] ?? data?.[String(id)];
+                        if (v !== undefined) {
+                            current[`0x${cluster.toString(16)}/0x${id.toString(16).padStart(4, "0")}`] =
+                                typeof v === "string" ? `str(${v.length}):${toHex(Buffer.from(v, "latin1"))}` : JSON.stringify(v);
+                        }
+                    } catch (err) {
+                        if (err?.message?.includes("UNSUPPORTED_CLUSTER")) break;
+                    }
+                }
+            }
+            const ieee = meta.device?.ieeeAddr ?? "device";
+            const previous = privateScanStore.get(ieee);
+            privateScanStore.set(ieee, current);
+            testLog(`private_scan found ${Object.keys(current).length} attributes: ${JSON.stringify(current)}`);
+            let changes;
+            if (!previous) {
+                changes = "baseline stored - change a setting on the device and scan again";
+            } else {
+                const diff = [];
+                for (const k of new Set([...Object.keys(previous), ...Object.keys(current)])) {
+                    if (previous[k] !== current[k]) diff.push(`${k}: ${previous[k] ?? "-"} -> ${current[k] ?? "-"}`);
+                }
+                changes = diff.length ? diff.join(" | ") : "no changes (note: text attributes can hide byte changes, see the log)";
+            }
+            testLog(`private_scan changes: ${changes}`);
+            return {
+                state: {
+                    private_scan_clusters: clusterList,
+                    private_scan_found: Object.keys(current).join(", "),
+                    private_scan_changes: changes,
+                    private_scan_time: new Date().toLocaleString(),
+                },
+            };
+        },
+    },
+
     week_program_read: {
         key: ["week_program_read"],
         convertSet: async (entity) => {
@@ -810,7 +931,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v3)",
+    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v4)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -848,6 +969,8 @@ const definition = {
         tzTest.simplify_probe,
         tzTest.week_program_read,
         tzTest.week_program_write,
+        tzTest.week_attr7_write,
+        tzTest.private_scan,
         tzEdge.system_mode,
         tz.thermostat_occupied_heating_setpoint,
         tz.thermostat_occupied_cooling_setpoint,
@@ -953,6 +1076,15 @@ const definition = {
         e
             .enum("week_program_write", ea.SET, ["resend_current", "test_plus_1"])
             .withDescription("TEST: send the last received week program to the device (unchanged, or weekday period 1 +1.0 deg C)."),
+        e
+            .enum("week_attr7_write", ea.SET, ["wake_plus_1", "full_program_plus_1"])
+            .withDescription("TEST v4: write attribute 0x0007 of cluster 0xE002 (Wake +1.0 deg C), then read it back."),
+        e.text("week_attr7_write_last", ea.STATE).withDescription("TEST v4: result of the last attribute 0x0007 write."),
+        e.enum("private_scan", ea.SET, ["scan"]).withDescription("TEST v4: read all attributes of the private clusters and show what changed."),
+        e.text("private_scan_clusters", ea.STATE).withDescription("TEST v4: clusters the device reported when it was paired."),
+        e.text("private_scan_found", ea.STATE).withDescription("TEST v4: private attributes the device answered."),
+        e.text("private_scan_changes", ea.STATE).withDescription("TEST v4: what changed since the previous private scan."),
+        e.text("private_scan_time", ea.STATE).withDescription("TEST v4: when the private scan last ran."),
         e.text("week_program_write_last", ea.STATE).withDescription("TEST: last week program write sent."),
         e.enum("week_program_read", ea.SET, ["read"]).withDescription("TEST: read attribute 0x0007 of cluster 0xE002."),
         e.text("week_program_attr7", ea.STATE).withDescription("TEST: result of the 0xE002 attribute 0x0007 read."),
