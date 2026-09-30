@@ -657,7 +657,8 @@ const fzTest = {
     // Unsolicited frames on the private cluster 0xE002 (57346). Z2M has no cluster definition
     // for it, so they arrive as "raw" with the full ZCL frame (header included).
     week_program: {
-        cluster: "57346",
+        // Z2M passes the numeric cluster ID for clusters it has no definition for.
+        cluster: 57346,
         type: ["raw"],
         convert: (model, msg) => {
             const raw = msg.data;
@@ -683,6 +684,9 @@ const fzTest = {
         },
     },
 };
+
+// Same converter keyed on the cluster ID as a string, in case the Z2M version passes it that way.
+fzTest.week_program_str = {...fzTest.week_program, cluster: "57346"};
 
 const tzTest = {
     simplify_probe: {
@@ -732,7 +736,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes)",
+    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v2)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -755,7 +759,7 @@ const definition = {
         m.humidity(),
         m.electricityMeter({voltage: false, configureReporting: false}),
     ],
-    fromZigbee: [fzEdge.basic, fz.thermostat, fzEdge.edge_custom, fz.hvac_user_interface, fzTest.week_program],
+    fromZigbee: [fzEdge.basic, fz.thermostat, fzEdge.edge_custom, fz.hvac_user_interface, fzTest.week_program, fzTest.week_program_str],
     toZigbee: [
         tzTest.simplify_probe,
         tzTest.week_program_read,
