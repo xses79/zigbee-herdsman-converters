@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 29c90d4), i.e. exactly what goes into the pull request, for use until
+// (commit 312b9dd), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -168,11 +168,13 @@ function edgeWeekProgramCluster() {
         commandsResponse: { weekProgram: { ID: 0x07, name: "weekProgram", parameters: edgeWeekProgramParameters } },
     });
 }
-function edgeWeekProgramSchedule(bytes) {
+// The temperatures follow the display unit: in Fahrenheit mode the device sends them in deg F (x10).
+function edgeWeekProgramSchedule(bytes, fahrenheit) {
     const entries = [];
     for (let i = 0; i + 3 < bytes.length; i += 4) {
         const time = `${String(bytes[i]).padStart(2, "0")}:${String(bytes[i + 1]).padStart(2, "0")}`;
-        const temperature = (((bytes[i + 2] & 0x0f) << 8) | bytes[i + 3]) / 10;
+        const raw = (((bytes[i + 2] & 0x0f) << 8) | bytes[i + 3]) / 10;
+        const temperature = fahrenheit ? Math.round(((raw - 32) * 5) / 9 / 0.5) * 0.5 : raw;
         entries.push(`${time} ${temperature}`);
     }
     return `Work days: ${entries.slice(0, 6).join(", ")} | Days off: ${entries.slice(6).join(", ")}`;
@@ -181,9 +183,10 @@ const fzEdge = {
     week_program_schedule: {
         cluster: "namronEdgeWeekProgram",
         type: ["commandWeekProgram"],
-        convert: (model, msg) => {
+        convert: (model, msg, publish, options, meta) => {
             const bytes = edgeWeekProgramParameters.map((p) => Number(msg.data[p.name] ?? 0));
-            return { week_program_schedule: edgeWeekProgramSchedule(bytes) };
+            const fahrenheit = meta.state.temperature_display_mode === "fahrenheit";
+            return { week_program_schedule: edgeWeekProgramSchedule(bytes, fahrenheit) };
         },
     },
     thermostat: {
@@ -267,15 +270,6 @@ const fzEdge = {
                     case 0x800d:
                         result["max_heat_setpoint_limit_f"] = value / 100;
                         break;
-                    case 0x800e:
-                        result["min_cool_setpoint_limit_f"] = value / 100;
-                        break;
-                    case 0x800f:
-                        result["max_cool_setpoint_limit_f"] = value / 100;
-                        break;
-                    case 0x8010:
-                        result["occupied_cooling_setpoint_f"] = value / 100;
-                        break;
                     case 0x8011:
                         result["occupied_heating_setpoint_f"] = value / 100;
                         break;
@@ -307,17 +301,16 @@ const fzEdge = {
                         // 5-minute steps (0-24 -> 0-120 min), confirmed against real hardware.
                         result["countdown_set"] = value * 5;
                         break;
+                    case 0x8024:
+                        // Minutes left while a countdown runs. With no countdown running the firmware
+                        // holds a meaningless value (e.g. 1325465600), so anything above 120 is shown as 0.
+                        result["countdown_left"] = value <= 120 ? value : 0;
+                        break;
                     case 0x8025:
                         result["max_heat_temp"] = value / 10;
                         break;
                     case 0x8026:
                         result["max_heat_temp_f"] = value / 10;
-                        break;
-                    case 0x8027:
-                        result["min_cool_temp"] = value / 10;
-                        break;
-                    case 0x8028:
-                        result["min_cool_temp_f"] = value / 10;
                         break;
                     case 0x8029:
                         result["screen_on_time"] = edgeScreenOnTimeLookup[String(value)] ?? String(value);
@@ -504,9 +497,6 @@ const tzEdge = {
             await entity.read("hvacThermostat", [0x8003]);
         },
     },
-    // countdownLeft (0x8024) is not exposed: this firmware answers reads on it with a
-    // meaningless value (1325465600), confirmed on real hardware.
-    //
     // Hysteresis is not exposed: it is not reachable over Zigbee (checked on firmware 1.12 and 1.14).
     // Both firmwares answer UNSUPPORTED_ATTRIBUTE for 0x8035, 0x8041, 0x8045 and 0x8052 (1.14 also
     // for 0x802a-0x8040), and changing hysteresis on the device changes no readable attribute.
@@ -617,32 +607,6 @@ const tzEdge = {
             await entity.read("hvacThermostat", [0x8026]);
         },
     },
-    min_cool_temp: {
-        key: ["min_cool_temp"],
-        convertSet: async (entity, key, value) => {
-            const num = Number(value);
-            if (Number.isNaN(num) || num < 10 || num > 30)
-                throw new Error("min_cool_temp must be 10-30");
-            await writeEdgeHvac(entity, 0x8027, Math.round(num * 10), DataType.INT16);
-            return { state: { min_cool_temp: num } };
-        },
-        convertGet: async (entity) => {
-            await entity.read("hvacThermostat", [0x8027]);
-        },
-    },
-    min_cool_temp_f: {
-        key: ["min_cool_temp_f"],
-        convertSet: async (entity, key, value) => {
-            const num = Number(value);
-            if (Number.isNaN(num) || num < 50 || num > 86)
-                throw new Error("min_cool_temp_f must be 50-86");
-            await writeEdgeHvac(entity, 0x8028, Math.round(num * 10), DataType.INT16);
-            return { state: { min_cool_temp_f: num } };
-        },
-        convertGet: async (entity) => {
-            await entity.read("hvacThermostat", [0x8028]);
-        },
-    },
 };
 // --- Namron Zigbee Edge Thermostat END ---------------------------------------
 
@@ -650,7 +614,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 29c90d4)",
+    description: "Zigbee Edge Thermostat (external converter, repo 312b9dd)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -714,8 +678,6 @@ const definition = {
         tzEdge.holiday_temp_set_f,
         tzEdge.max_heat_temp,
         tzEdge.max_heat_temp_f,
-        tzEdge.min_cool_temp,
-        tzEdge.min_cool_temp_f,
     ],
     configure: async (device, coordinatorEndpoint) => {
         // Defensive re-registration - onEvent('start') (used by
@@ -775,11 +737,9 @@ const definition = {
         await safeReadEdge(endpoint, "hvacThermostat", ["programingOperMode"]);
         await safeReadEdge(endpoint, "hvacThermostat", ["absMinHeatSetpointLimit"]);
         await safeReadEdge(endpoint, "hvacThermostat", ["absMaxHeatSetpointLimit"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["absMinCoolSetpointLimit"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["absMaxCoolSetpointLimit"]);
         await safeReadEdge(endpoint, "hvacThermostat", [
-            0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x800c, 0x800d, 0x800e, 0x800f, 0x8010, 0x8011,
-            0x8012, 0x8013, 0x801b, 0x801d, 0x801f, 0x8020, 0x8021, 0x8022, 0x8023, 0x8025, 0x8026, 0x8027, 0x8028, 0x8029,
+            0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x800c, 0x800d, 0x8011, 0x8012, 0x8013, 0x801b,
+            0x801d, 0x801f, 0x8020, 0x8021, 0x8022, 0x8023, 0x8025, 0x8026, 0x8029,
         ]);
         await safeReadEdge(endpoint, "hvacUserInterfaceCfg", ["keypadLockout", "tempDisplayMode"]);
         await safeReadEdge(endpoint, "seMetering", ["currentSummDelivered", "divisor", "multiplier"]);
@@ -835,7 +795,7 @@ const definition = {
         e.binary("frost", ea.ALL, "ON", "OFF").withDescription('Frost protection. Only usable while system_mode is "heat".'),
         e.binary("window_open_check", ea.ALL, "ON", "OFF").withDescription("Open-window detection (auto pause heating)."),
         e.enum("window_state", ea.STATE, ["open", "closed"]).withDescription("Open-window detection result."),
-        e.binary("keypad_lockout", ea.ALL, "LOCK", "UNLOCK").withDescription("Physical button lock on the device."),
+        e.binary("keypad_lockout", ea.ALL, "lock1", "unlock").withDescription("Physical button lock on the device."),
         e.enum("temperature_display_mode", ea.ALL, ["celsius", "fahrenheit"]).withDescription("Unit shown on the device's own screen."),
         e.numeric("panel_brightness", ea.ALL).withUnit("%").withValueMin(1).withValueMax(100).withDescription("LCD backlight brightness."),
         e.enum("screen_on_time", ea.ALL, ["always_on", "10s", "30s", "60s"]).withDescription("How long the backlight stays on after a touch."),
@@ -846,6 +806,7 @@ const definition = {
             .withValueMax(120)
             .withValueStep(5)
             .withDescription("Countdown timer; heating stops when it reaches 0. 0 = cancelled. Not usable in cooling mode."),
+        e.numeric("countdown_left", ea.STATE).withUnit("min").withDescription("Minutes left of a running countdown, as reported by the device."),
         e.binary("vacation_mode", ea.ALL, "ON", "OFF").withDescription("Holds holiday_temp_set until vacation_end."),
         e.text("vacation_start", ea.ALL).withDescription("Vacation start date, format YYYY-MM-DD."),
         e.text("vacation_end", ea.ALL).withDescription("Vacation end date, format YYYY-MM-DD."),
@@ -873,18 +834,6 @@ const definition = {
             .withValueMin(59)
             .withValueMax(95)
             .withDescription(`Upper limit for the heating setpoint (${DEG}F).`),
-        e
-            .numeric("min_cool_temp", ea.ALL)
-            .withUnit(`${DEG}C`)
-            .withValueMin(10)
-            .withValueMax(30)
-            .withDescription("Lower limit for the cooling setpoint."),
-        e
-            .numeric("min_cool_temp_f", ea.ALL)
-            .withUnit(`${DEG}F`)
-            .withValueMin(50)
-            .withValueMax(86)
-            .withDescription(`Lower limit for the cooling setpoint (${DEG}F).`),
         e.binary("auto_time", ea.ALL, "ON", "OFF").withDescription("Let the device auto-sync its clock from the coordinator."),
         e.enum("sync_time", ea.SET, ["sync"]).withDescription('Write "sync" to push the current time to the device now.'),
         e.text("clock_last_synced", ea.STATE).withDescription("Device's own clock, as last reported (local time)."),
@@ -893,20 +842,12 @@ const definition = {
         e.text("firmware_date", ea.STATE).withDescription("Reported firmware date code."),
         e.numeric("min_heat_setpoint_limit", ea.STATE_GET).withUnit(`${DEG}C`),
         e.numeric("max_heat_setpoint_limit", ea.STATE_GET).withUnit(`${DEG}C`),
-        e.numeric("min_cool_setpoint_limit", ea.STATE_GET).withUnit(`${DEG}C`),
-        e.numeric("max_cool_setpoint_limit", ea.STATE_GET).withUnit(`${DEG}C`),
         e.numeric("min_heat_setpoint_limit_f", ea.STATE_GET).withUnit(`${DEG}F`),
         e.numeric("max_heat_setpoint_limit_f", ea.STATE_GET).withUnit(`${DEG}F`),
-        e.numeric("min_cool_setpoint_limit_f", ea.STATE_GET).withUnit(`${DEG}F`),
-        e.numeric("max_cool_setpoint_limit_f", ea.STATE_GET).withUnit(`${DEG}F`),
         e
             .numeric("occupied_heating_setpoint_f", ea.STATE_GET)
             .withUnit(`${DEG}F`)
             .withDescription("Device's own Fahrenheit-mode heating setpoint mirror."),
-        e
-            .numeric("occupied_cooling_setpoint_f", ea.STATE_GET)
-            .withUnit(`${DEG}F`)
-            .withDescription("Device's own Fahrenheit-mode cooling setpoint mirror."),
         e.numeric("local_temperature_f", ea.STATE_GET).withUnit(`${DEG}F`).withDescription("Device's own Fahrenheit-mode temperature mirror."),
     ],
 };
