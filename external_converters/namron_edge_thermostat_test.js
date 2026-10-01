@@ -29,6 +29,13 @@
 //    previous scan (private_scan_changes). Use it to look for hysteresis: scan, change hysteresis on
 //    the device, scan again.
 //
+// 5. v5 - the WRITE buttons from v3/v4 are REMOVED (writing the full week program restarts the
+//    Zigbee module and leaves many attributes at factory defaults). Everything here is read-only.
+//    "discover_attributes" asks the device which attributes it has (ZCL Discover Attributes), for
+//    every cluster, both standard and with the device's manufacturer code. "full_scan" then reads
+//    every discovered attribute and reports what changed since the previous full_scan. Use it for
+//    hysteresis: full_scan, change hysteresis on the device, full_scan again.
+//
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Log lines are prefixed [namron_edge_test].
 
@@ -736,26 +743,12 @@ fzTest.week_program_str = {...fzTest.week_program, cluster: "57346"};
 // Raw frames that fail to parse arrive under the registered cluster name.
 fzTest.week_program_named_raw = {...fzTest.week_program, cluster: WEEK_CLUSTER};
 
+// Discovered attributes and last full scan per device.
+const discoverStore = new Map();
+const fullScanStore = new Map();
+
 // Last private scan per device, for private_scan_changes.
 const privateScanStore = new Map();
-
-function programBytesFromState(meta) {
-    const hex = meta.state?.week_program_raw;
-    if (typeof hex !== "string") throw new Error("No week program received yet: change something in the week program on the device first");
-    const bytes = hex.split(" ").map((h) => Number.parseInt(h, 16));
-    if (bytes.length !== 32 || bytes.some((b) => Number.isNaN(b))) throw new Error(`Unexpected week_program_raw: ${hex}`);
-    return bytes;
-}
-
-// Weekday period 1 (Wake): temperature x10 in bytes 2-3, mode tag in the high nibble of byte 2.
-function wakePlusOne(bytes) {
-    const out = bytes.slice();
-    const tag = out[2] & 0xf0;
-    const temp = Math.min((((out[2] & 0x0f) << 8) | out[3]) + 10, 400);
-    out[2] = tag | ((temp >> 8) & 0x0f);
-    out[3] = temp & 0xff;
-    return out;
-}
 
 const tzTest = {
     simplify_probe: {
@@ -783,76 +776,84 @@ const tzTest = {
         },
     },
 
-    week_program_write: {
-        key: ["week_program_write"],
+    discover_attributes: {
+        key: ["discover_attributes"],
         convertSet: async (entity, key, value, meta) => {
-            const hex = meta.state?.week_program_raw;
-            if (typeof hex !== "string") {
-                throw new Error("No week program received yet: change something in the week program on the device first");
+            const clusters = [...new Set([...(entity.inputClusters ?? []), 0xe002])];
+            const mfr = meta.device?.manufacturerID;
+            const found = {};
+            for (const cluster of clusters) {
+                for (const manufacturerCode of [undefined, mfr]) {
+                    if (manufacturerCode === undefined && found[`0x${cluster.toString(16)}`]) continue;
+                    const label = `0x${cluster.toString(16)}${manufacturerCode !== undefined ? ` mfr 0x${manufacturerCode.toString(16)}` : ""}`;
+                    const attrs = [];
+                    let start = 0;
+                    try {
+                        for (let round = 0; round < 20; round++) {
+                            const options = manufacturerCode !== undefined ? {manufacturerCode} : {};
+                            const frame = await entity.zclCommand(cluster, "discover", {startAttrId: start, maxAttrIds: 20}, options, {}, false, 0);
+                            const payload = frame?.payload;
+                            const infos = payload?.attrInfos ?? [];
+                            for (const info of infos) attrs.push(`0x${info.attrId.toString(16).padStart(4, "0")}:t${info.dataType.toString(16)}`);
+                            if (payload?.discComplete || infos.length === 0) break;
+                            start = infos[infos.length - 1].attrId + 1;
+                        }
+                        found[label] = attrs;
+                    } catch (err) {
+                        found[label] = `error: ${err?.message ?? err}`;
+                    }
+                    testLog(`discover ${label}: ${JSON.stringify(found[label])}`);
+                    if (manufacturerCode === undefined && mfr === undefined) break;
+                }
             }
-            const bytes = hex.split(" ").map((h) => Number.parseInt(h, 16));
-            if (bytes.length !== 32 || bytes.some((b) => Number.isNaN(b))) throw new Error(`Unexpected week_program_raw: ${hex}`);
-            if (value === "test_plus_1") {
-                // Weekday period 1: bytes 2-3, temperature x10 big-endian, mode tag in the high nibble of byte 2.
-                const tag = bytes[2] & 0xf0;
-                const temp = Math.min((((bytes[2] & 0x0f) << 8) | bytes[3]) + 10, 400);
-                bytes[2] = tag | ((temp >> 8) & 0x0f);
-                bytes[3] = temp & 0xff;
-            } else if (value !== "resend_current") {
-                throw new Error(`Invalid week_program_write: ${value}`);
-            }
-            const payload = {};
-            bytes.forEach((b, i) => {
-                payload[`p${i}`] = b;
-            });
-            const sent = describeWeekProgram(parseWeekProgram(bytes));
-            testLog(`week_program_write ${value}: sending ${toHex(bytes)} (${sent})`);
-            try {
-                await entity.command(WEEK_CLUSTER, "weekProgram", payload, {disableDefaultResponse: false});
-                testLog("week_program_write: device accepted the command");
-            } catch (err) {
-                testLog(`week_program_write FAILED: ${err?.message ?? err}`);
-                throw err;
-            }
-            return {state: {week_program_write_last: `${new Date().toLocaleString()} ${value}: ${sent}`}};
+            discoverStore.set(meta.device?.ieeeAddr ?? "device", found);
+            const summary = Object.entries(found)
+                .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(" ") : v}`)
+                .join(" | ");
+            return {state: {discovered_attributes: summary, discover_time: new Date().toLocaleString(), device_manufacturer_code: mfr}};
         },
     },
 
-    week_attr7_write: {
-        key: ["week_attr7_write"],
+    full_scan: {
+        key: ["full_scan"],
         convertSet: async (entity, key, value, meta) => {
-            const program = wakePlusOne(programBytesFromState(meta));
-            let content;
-            if (value === "wake_plus_1") {
-                // Same form as the device reports: 00 [temp hi] [temp lo] [next hour] [next minute]
-                content = [0x00, program[2], program[3], program[4], program[5]];
-            } else if (value === "full_program_plus_1") {
-                content = program;
+            const ieee = meta.device?.ieeeAddr ?? "device";
+            const found = discoverStore.get(ieee);
+            if (!found) throw new Error("Run discover_attributes first");
+            const current = {};
+            for (const [label, attrs] of Object.entries(found)) {
+                if (!Array.isArray(attrs)) continue;
+                const cluster = Number.parseInt(label.slice(2).split(" ")[0], 16);
+                const mfrIndex = label.indexOf(" mfr 0x");
+                const options = mfrIndex >= 0 ? {manufacturerCode: Number.parseInt(label.slice(mfrIndex + 7), 16)} : {};
+                for (const a of attrs) {
+                    const id = Number.parseInt(a.slice(2, 6), 16);
+                    try {
+                        const data = await entity.read(cluster, [id], options);
+                        const keys = Object.keys(data ?? {});
+                        const v = keys.length ? data[keys[0]] : undefined;
+                        current[`${label}/${a.slice(0, 6)}`] =
+                            typeof v === "string" ? `str(${v.length}):${toHex(Buffer.from(v, "latin1"))}` : JSON.stringify(v);
+                    } catch (err) {
+                        current[`${label}/${a.slice(0, 6)}`] = `error: ${err?.message ?? err}`;
+                    }
+                }
+            }
+            const previous = fullScanStore.get(ieee);
+            fullScanStore.set(ieee, current);
+            testLog(`full_scan ${Object.keys(current).length} attributes: ${JSON.stringify(current)}`);
+            let changes;
+            if (!previous) {
+                changes = "baseline stored - change a setting on the device and run full_scan again";
             } else {
-                throw new Error(`Invalid week_attr7_write: ${value}`);
+                const diff = [];
+                for (const k of new Set([...Object.keys(previous), ...Object.keys(current)])) {
+                    if (previous[k] !== current[k]) diff.push(`${k}: ${previous[k] ?? "-"} -> ${current[k] ?? "-"}`);
+                }
+                changes = diff.length ? diff.join(" | ") : "no changes (note: text attributes can hide byte changes, see the log)";
             }
-            // CHAR_STRING with raw bytes: herdsman writes a byte array as-is, so the length byte goes first.
-            const raw = Buffer.from([content.length, ...content]);
-            testLog(`week_attr7_write ${value}: writing 0xE002/0x0007 = ${toHex(content)}`);
-            let result;
-            try {
-                await entity.write(WEEK_CLUSTER, {7: {value: raw, type: 0x42}}, {disableDefaultResponse: false});
-                result = "write OK";
-            } catch (err) {
-                result = `write FAILED: ${err?.message ?? err}`;
-            }
-            testLog(`week_attr7_write ${value}: ${result}`);
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            let readBack;
-            try {
-                const data = await entity.read(WEEK_CLUSTER, [7]);
-                const v = data?.[7] ?? data?.["7"];
-                readBack = typeof v === "string" ? `${v.length} chars (see log for raw bytes)` : JSON.stringify(v);
-            } catch (err) {
-                readBack = `read FAILED: ${err?.message ?? err}`;
-            }
-            testLog(`week_attr7_write ${value}: read back ${readBack}`);
-            return {state: {week_attr7_write_last: `${new Date().toLocaleString()} ${value}: ${result}; read back ${readBack}`}};
+            testLog(`full_scan changes: ${changes}`);
+            return {state: {full_scan_changes: changes, full_scan_count: Object.keys(current).length, full_scan_time: new Date().toLocaleString()}};
         },
     },
 
@@ -931,7 +932,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v4)",
+    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v5)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -968,9 +969,9 @@ const definition = {
     toZigbee: [
         tzTest.simplify_probe,
         tzTest.week_program_read,
-        tzTest.week_program_write,
-        tzTest.week_attr7_write,
         tzTest.private_scan,
+        tzTest.discover_attributes,
+        tzTest.full_scan,
         tzEdge.system_mode,
         tz.thermostat_occupied_heating_setpoint,
         tz.thermostat_occupied_cooling_setpoint,
@@ -1074,18 +1075,20 @@ const definition = {
         e.text("week_program_raw", ea.STATE).withDescription("TEST: raw bytes of the last week program frame."),
         e.text("week_program_updated", ea.STATE).withDescription("TEST: when the last week program frame arrived."),
         e
-            .enum("week_program_write", ea.SET, ["resend_current", "test_plus_1"])
-            .withDescription("TEST: send the last received week program to the device (unchanged, or weekday period 1 +1.0 deg C)."),
-        e
-            .enum("week_attr7_write", ea.SET, ["wake_plus_1", "full_program_plus_1"])
-            .withDescription("TEST v4: write attribute 0x0007 of cluster 0xE002 (Wake +1.0 deg C), then read it back."),
-        e.text("week_attr7_write_last", ea.STATE).withDescription("TEST v4: result of the last attribute 0x0007 write."),
+            .enum("discover_attributes", ea.SET, ["discover"])
+            .withDescription("TEST v5: ask the device which attributes it has (all clusters, with and without manufacturer code)."),
+        e.text("discovered_attributes", ea.STATE).withDescription("TEST v5: attributes the device reported (id:type)."),
+        e.numeric("device_manufacturer_code", ea.STATE).withDescription("TEST v5: manufacturer code from the node descriptor."),
+        e.text("discover_time", ea.STATE).withDescription("TEST v5: when discover last ran."),
+        e.enum("full_scan", ea.SET, ["scan"]).withDescription("TEST v5: read every discovered attribute and show what changed."),
+        e.text("full_scan_changes", ea.STATE).withDescription("TEST v5: what changed since the previous full_scan."),
+        e.numeric("full_scan_count", ea.STATE).withDescription("TEST v5: number of attributes read."),
+        e.text("full_scan_time", ea.STATE).withDescription("TEST v5: when full_scan last ran."),
         e.enum("private_scan", ea.SET, ["scan"]).withDescription("TEST v4: read all attributes of the private clusters and show what changed."),
         e.text("private_scan_clusters", ea.STATE).withDescription("TEST v4: clusters the device reported when it was paired."),
         e.text("private_scan_found", ea.STATE).withDescription("TEST v4: private attributes the device answered."),
         e.text("private_scan_changes", ea.STATE).withDescription("TEST v4: what changed since the previous private scan."),
         e.text("private_scan_time", ea.STATE).withDescription("TEST v4: when the private scan last ran."),
-        e.text("week_program_write_last", ea.STATE).withDescription("TEST: last week program write sent."),
         e.enum("week_program_read", ea.SET, ["read"]).withDescription("TEST: read attribute 0x0007 of cluster 0xE002."),
         e.text("week_program_attr7", ea.STATE).withDescription("TEST: result of the 0xE002 attribute 0x0007 read."),
         e.enum("simplify_probe", ea.SET, ["probe"]).withDescription("TEST: read all unconfirmed Simplify attributes, one at a time."),
