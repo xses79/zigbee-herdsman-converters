@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 40b9906), i.e. exactly what goes into the pull request, for use until
+// (commit 7eef33e), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -23,9 +23,9 @@ const DataType = {BOOLEAN: 0x10, BITMAP8: 0x18, UINT8: 0x20, UINT16: 0x21, UINT3
 const DEG = String.fromCharCode(176);
 
 // --- Namron Zigbee Edge Thermostat (4566702/4566703/4512783/4512784) ----------
-// Clock (0x800b): Unix time (seconds since 1970) in *local* time. Seconds since 2000 are
-// acknowledged but ignored by the device (it shows a 1996 date). The panel shows the value
-// as-is, with no time zone of its own. Confirmed on a 4512783.
+// Clock (0x800b): Unix time (seconds since 1970) in *local* time. HZC's own app for the T11_ZG
+// writes Unix time; seconds since 2000 are acknowledged but ignored (a 1996 date). With auto time
+// sync on, the display shows the value as-is, with no time zone of its own. Confirmed on a 4512783.
 function edgeLocalTime() {
     const now = new Date();
     return Math.round(now.getTime() / 1000 - now.getTimezoneOffset() * 60);
@@ -280,7 +280,7 @@ const fzEdge = {
                         break;
                     case 0x800b:
                         try {
-                            // Local wall-clock time stored as Unix seconds, so format it without a time zone.
+                            // local wall-clock time stored as Unix seconds, so format it without a time zone
                             result["clock_last_synced"] = new Date(value * 1000).toISOString().replace("T", " ").slice(0, 19);
                         }
                         catch (_) {
@@ -637,7 +637,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 40b9906)",
+    description: "Zigbee Edge Thermostat (external converter, repo 7eef33e)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -843,7 +843,7 @@ const definition = {
             .withDescription(`Upper limit for the heating setpoint (${DEG}F).`),
         e.binary("auto_time", ea.ALL, "ON", "OFF").withDescription("Let the device auto-sync its clock from the coordinator."),
         e.enum("sync_time", ea.SET, ["sync"]).withDescription('Write "sync" to push the current time to the device now.'),
-        e.text("clock_last_synced", ea.STATE).withDescription("Device's own clock, as last reported (local time)."),
+        e.text("clock_last_synced", ea.STATE).withDescription("Local time the device's clock was last set to."),
         e.text("fault", ea.STATE).withDescription('Active fault codes reported by the device, or "none".'),
         e.text("firmware_version", ea.STATE).withDescription("Reported software build ID."),
         e.text("firmware_date", ea.STATE).withDescription("Reported firmware date code."),

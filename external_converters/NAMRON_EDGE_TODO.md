@@ -1,6 +1,6 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-01, repo-kode `40b9906` (branch `claude/trusting-meitner-ga1p5l`), fastvare 1.14.
+Status per 2026-10-01, repo-kode `7eef33e` (branch `claude/trusting-meitner-ga1p5l`), fastvare 1.14.
 
 ## Huskeliste
 
