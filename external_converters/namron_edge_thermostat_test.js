@@ -43,6 +43,11 @@
 //    0x8000-0x803f. Reports which ones answered and what changed since the previous mfr_scan.
 //    full_scan now refuses to run on an empty discover result.
 //
+// 7. v7 - the device DOES answer Discover Attributes (the replies are in the Z2M debug log), but the
+//    replies were not returned to the converter in time. "discover_thermostat" sends Discover
+//    Attributes for hvacThermostat in chunks from several start IDs, with a pause between them;
+//    read the results from the Z2M debug log ("commandIdentifier":13).
+//
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Log lines are prefixed [namron_edge_test].
 
@@ -868,6 +873,23 @@ const tzTest = {
         },
     },
 
+    discover_thermostat: {
+        key: ["discover_thermostat"],
+        convertSet: async (entity) => {
+            const starts = [0x0000, 0x0020, 0x0040, 0x4000, 0x8000, 0x8014, 0x8028, 0x803c, 0x8050, 0x8064, 0xf000];
+            for (const startAttrId of starts) {
+                try {
+                    await entity.zclCommand("hvacThermostat", "discover", {startAttrId, maxAttrIds: 20}, {}, {startAttrId, maxAttrIds: 20}, false, 0);
+                } catch (err) {
+                    testLog(`discover_thermostat from 0x${startAttrId.toString(16)} failed: ${err?.message ?? err}`);
+                }
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+            }
+            testLog("discover_thermostat done - results are the discoverRsp frames (commandIdentifier 13) in the debug log");
+            return {state: {discover_thermostat_time: new Date().toLocaleString()}};
+        },
+    },
+
     mfr_scan: {
         key: ["mfr_scan"],
         convertSet: async (entity, key, value, meta) => {
@@ -997,7 +1019,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v6)",
+    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v7)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -1038,6 +1060,7 @@ const definition = {
         tzTest.discover_attributes,
         tzTest.full_scan,
         tzTest.mfr_scan,
+        tzTest.discover_thermostat,
         tzEdge.system_mode,
         tz.thermostat_occupied_heating_setpoint,
         tz.thermostat_occupied_cooling_setpoint,
@@ -1150,6 +1173,10 @@ const definition = {
         e.text("full_scan_changes", ea.STATE).withDescription("TEST v5: what changed since the previous full_scan."),
         e.numeric("full_scan_count", ea.STATE).withDescription("TEST v5: number of attributes read."),
         e.text("full_scan_time", ea.STATE).withDescription("TEST v5: when full_scan last ran."),
+        e
+            .enum("discover_thermostat", ea.SET, ["discover"])
+            .withDescription("TEST v7: Discover Attributes on hvacThermostat in chunks; results are in the debug log."),
+        e.text("discover_thermostat_time", ea.STATE).withDescription("TEST v7: when discover_thermostat last ran."),
         e.enum("mfr_scan", ea.SET, ["scan"]).withDescription("TEST v6: read manufacturer-specific attributes with codes 0x126A and 0x1224."),
         e.text("mfr_scan_found", ea.STATE).withDescription("TEST v6: manufacturer-specific attributes that answered."),
         e.text("mfr_scan_changes", ea.STATE).withDescription("TEST v6: what changed since the previous mfr_scan."),
