@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 9eb8653), i.e. exactly what goes into the pull request, for use until
+// (commit 40b9906), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -114,7 +114,7 @@ async function safeReadEdge(endpoint, cluster, attrs) {
 // small groups. Used by configure and on every Zigbee2MQTT start, so the state is filled in without a reconfigure.
 const edgeCustomAttributes = [
     0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x800c, 0x800d, 0x8011, 0x8012, 0x8013, 0x801b, 0x801d, 0x801f,
-    0x8020, 0x8021, 0x8022, 0x8023, 0x8025, 0x8026, 0x8029,
+    0x8020, 0x8021, 0x8022, 0x8023, 0x8024, 0x8025, 0x8026, 0x8029,
 ];
 async function edgeReadAll(endpoint) {
     await safeReadEdge(endpoint, "genBasic", ["swBuildId", "dateCode"]);
@@ -637,7 +637,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 9eb8653)",
+    description: "Zigbee Edge Thermostat (external converter, repo 40b9906)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
