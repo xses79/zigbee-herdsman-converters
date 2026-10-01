@@ -36,6 +36,13 @@
 //    every discovered attribute and reports what changed since the previous full_scan. Use it for
 //    hysteresis: full_scan, change hysteresis on the device, full_scan again.
 //
+// 6. v6 - the device does not answer Discover Attributes (discover returned nothing), so
+//    "mfr_scan" reads manufacturer-specific attributes directly, one at a time, on hvacThermostat
+//    and hvacUserInterfaceCfg with the device's own code (0x126A) and Sunricher's (0x1224, used for
+//    hysteresis 0x100A on other Namron thermostats): ranges 0x1000-0x103f, 0x2000-0x2007 and
+//    0x8000-0x803f. Reports which ones answered and what changed since the previous mfr_scan.
+//    full_scan now refuses to run on an empty discover result.
+//
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Log lines are prefixed [namron_edge_test].
 
@@ -746,6 +753,7 @@ fzTest.week_program_named_raw = {...fzTest.week_program, cluster: WEEK_CLUSTER};
 // Discovered attributes and last full scan per device.
 const discoverStore = new Map();
 const fullScanStore = new Map();
+const mfrScanStore = new Map();
 
 // Last private scan per device, for private_scan_changes.
 const privateScanStore = new Map();
@@ -820,6 +828,9 @@ const tzTest = {
             const ieee = meta.device?.ieeeAddr ?? "device";
             const found = discoverStore.get(ieee);
             if (!found) throw new Error("Run discover_attributes first");
+            if (!Object.values(found).some((v) => Array.isArray(v) && v.length > 0)) {
+                throw new Error("discover_attributes found no attributes (the device does not answer Discover Attributes); use mfr_scan");
+            }
             const current = {};
             for (const [label, attrs] of Object.entries(found)) {
                 if (!Array.isArray(attrs)) continue;
@@ -854,6 +865,60 @@ const tzTest = {
             }
             testLog(`full_scan changes: ${changes}`);
             return {state: {full_scan_changes: changes, full_scan_count: Object.keys(current).length, full_scan_time: new Date().toLocaleString()}};
+        },
+    },
+
+    mfr_scan: {
+        key: ["mfr_scan"],
+        convertSet: async (entity, key, value, meta) => {
+            const codes = [...new Set([meta.device?.manufacturerID ?? 0x126a, 0x126a, 0x1224])];
+            const ranges = [
+                [0x1000, 0x103f],
+                [0x2000, 0x2007],
+                [0x8000, 0x803f],
+            ];
+            const current = {};
+            for (const cluster of ["hvacThermostat", "hvacUserInterfaceCfg"]) {
+                for (const manufacturerCode of codes) {
+                    for (const [from, to] of ranges) {
+                        if (cluster === "hvacUserInterfaceCfg" && from !== 0x1000) continue;
+                        for (let id = from; id <= to; id++) {
+                            try {
+                                const data = await entity.read(cluster, [id], {manufacturerCode});
+                                const keys = Object.keys(data ?? {});
+                                if (!keys.length) continue;
+                                const v = data[keys[0]];
+                                current[`${cluster} mfr 0x${manufacturerCode.toString(16)}/0x${id.toString(16)}`] =
+                                    typeof v === "string" ? `str(${v.length}):${toHex(Buffer.from(v, "latin1"))}` : JSON.stringify(v);
+                            } catch (_) {
+                                /* unsupported */
+                            }
+                        }
+                    }
+                }
+            }
+            const ieee = meta.device?.ieeeAddr ?? "device";
+            const previous = mfrScanStore.get(ieee);
+            mfrScanStore.set(ieee, current);
+            testLog(`mfr_scan found ${Object.keys(current).length} attributes: ${JSON.stringify(current)}`);
+            let changes;
+            if (!previous) {
+                changes = "baseline stored - change a setting on the device and run mfr_scan again";
+            } else {
+                const diff = [];
+                for (const k of new Set([...Object.keys(previous), ...Object.keys(current)])) {
+                    if (previous[k] !== current[k]) diff.push(`${k}: ${previous[k] ?? "-"} -> ${current[k] ?? "-"}`);
+                }
+                changes = diff.length ? diff.join(" | ") : "no changes";
+            }
+            testLog(`mfr_scan changes: ${changes}`);
+            return {
+                state: {
+                    mfr_scan_found: Object.keys(current).length ? JSON.stringify(current) : "nothing answered",
+                    mfr_scan_changes: changes,
+                    mfr_scan_time: new Date().toLocaleString(),
+                },
+            };
         },
     },
 
@@ -932,7 +997,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v5)",
+    description: "Zigbee Edge Thermostat (external TEST converter, repo aba5c76 + probes v6)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -972,6 +1037,7 @@ const definition = {
         tzTest.private_scan,
         tzTest.discover_attributes,
         tzTest.full_scan,
+        tzTest.mfr_scan,
         tzEdge.system_mode,
         tz.thermostat_occupied_heating_setpoint,
         tz.thermostat_occupied_cooling_setpoint,
@@ -1084,6 +1150,10 @@ const definition = {
         e.text("full_scan_changes", ea.STATE).withDescription("TEST v5: what changed since the previous full_scan."),
         e.numeric("full_scan_count", ea.STATE).withDescription("TEST v5: number of attributes read."),
         e.text("full_scan_time", ea.STATE).withDescription("TEST v5: when full_scan last ran."),
+        e.enum("mfr_scan", ea.SET, ["scan"]).withDescription("TEST v6: read manufacturer-specific attributes with codes 0x126A and 0x1224."),
+        e.text("mfr_scan_found", ea.STATE).withDescription("TEST v6: manufacturer-specific attributes that answered."),
+        e.text("mfr_scan_changes", ea.STATE).withDescription("TEST v6: what changed since the previous mfr_scan."),
+        e.text("mfr_scan_time", ea.STATE).withDescription("TEST v6: when mfr_scan last ran."),
         e.enum("private_scan", ea.SET, ["scan"]).withDescription("TEST v4: read all attributes of the private clusters and show what changed."),
         e.text("private_scan_clusters", ea.STATE).withDescription("TEST v4: clusters the device reported when it was paired."),
         e.text("private_scan_found", ea.STATE).withDescription("TEST v4: private attributes the device answered."),
