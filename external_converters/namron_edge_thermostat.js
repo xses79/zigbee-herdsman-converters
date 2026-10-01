@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 312b9dd), i.e. exactly what goes into the pull request, for use until
+// (commit df8468b), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -30,26 +30,19 @@ function edgeLocalTime() {
     const now = new Date();
     return Math.round(now.getTime() / 1000 - now.getTimezoneOffset() * 60);
 }
+// Vacation dates (0x8020/0x8021): days since 1970-01-01, the same encoding as Namron's own Homey driver.
 function edgeDateDecode(value) {
     if (!value)
         return null;
-    try {
-        const s = String(value).padStart(6, "0");
-        return `20${s.slice(0, 2)}-${s.slice(2, 4)}-${s.slice(4, 6)}`;
-    }
-    catch (_) {
-        return null;
-    }
+    return new Date(value * 86400000).toISOString().slice(0, 10);
 }
 function edgeDateEncode(value) {
-    // Plain string parsing (no regex): the Z2M converter editor mangles regex literals.
-    const parts = String(value).split("-");
-    const ok = parts.length === 3 && parts[0].length === 4 && parts[0].startsWith("20") && parts[1].length === 2 && parts[2].length === 2;
-    const digits = ok ? parts[0].slice(2) + parts[1] + parts[2] : "";
-    if (!ok || Number.isNaN(Number(digits)) || digits.includes(" ")) {
+    const [year, month, day] = String(value).split("-").map(Number);
+    const days = Date.UTC(year, month - 1, day) / 86400000;
+    const valid = String(value).length === 10 && Number.isInteger(days) && edgeDateDecode(days) === value;
+    if (!valid)
         throw new Error(`Invalid date: ${value}. Use YYYY-MM-DD format, e.g. 2026-06-05.`);
-    }
-    return Number(digits);
+    return days;
 }
 function deriveEdgeThermostatMode(frost, vacationMode, sensorMode, progOpMode, countdownSet) {
     if (frost === "ON")
@@ -614,7 +607,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 312b9dd)",
+    description: "Zigbee Edge Thermostat (external converter, repo df8468b)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
