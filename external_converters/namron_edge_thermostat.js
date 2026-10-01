@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 28fcbe6), i.e. exactly what goes into the pull request, for use until
+// (commit 9eb8653), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -109,6 +109,36 @@ async function safeReadEdge(endpoint, cluster, attrs) {
         await endpoint.read(cluster, attrs);
     }
     catch (_) { }
+}
+// The device answers a read of many attributes with only the first 14 or so, so the custom attributes are read in
+// small groups. Used by configure and on every Zigbee2MQTT start, so the state is filled in without a reconfigure.
+const edgeCustomAttributes = [
+    0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x800c, 0x800d, 0x8011, 0x8012, 0x8013, 0x801b, 0x801d, 0x801f,
+    0x8020, 0x8021, 0x8022, 0x8023, 0x8025, 0x8026, 0x8029,
+];
+async function edgeReadAll(endpoint) {
+    await safeReadEdge(endpoint, "genBasic", ["swBuildId", "dateCode"]);
+    await safeReadEdge(endpoint, "hvacThermostat", ["localTemp", "occupiedHeatingSetpoint", "occupiedCoolingSetpoint", "systemMode"]);
+    await safeReadEdge(endpoint, "hvacThermostat", ["runningState", "localTemperatureCalibration", "pIHeatingDemand", "programingOperMode"]);
+    await safeReadEdge(endpoint, "hvacThermostat", ["absMinHeatSetpointLimit", "absMaxHeatSetpointLimit"]);
+    for (let i = 0; i < edgeCustomAttributes.length; i += 8) {
+        await safeReadEdge(endpoint, "hvacThermostat", edgeCustomAttributes.slice(i, i + 8));
+    }
+    await safeReadEdge(endpoint, "hvacUserInterfaceCfg", ["keypadLockout", "tempDisplayMode"]);
+    await safeReadEdge(endpoint, "seMetering", ["currentSummDelivered", "divisor", "multiplier"]);
+    await safeReadEdge(endpoint, "haElectricalMeasurement", ["activePower", "rmsCurrent", "acPowerMultiplier", "acPowerDivisor"]);
+}
+function edgeReadOnStartup() {
+    const onEvent = (event) => {
+        if (event.type === "start") {
+            const endpoint = event.data.device.getEndpoint(1);
+            if (endpoint) {
+                // Not awaited, so startup is not held up; safeReadEdge already ignores read errors.
+                void edgeReadAll(endpoint);
+            }
+        }
+    };
+    return { onEvent: [onEvent], isModernExtend: true };
 }
 async function writeEdgeHvac(entity, attr, value, type) {
     // Confirmed via testing: this firmware rejects several of these writes
@@ -607,11 +637,12 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 28fcbe6)",
+    description: "Zigbee Edge Thermostat (external converter, repo 9eb8653)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
         edgeWeekProgramCluster(),
+        edgeReadOnStartup(),
         // The device accepts a calibration of -10 to +10 deg C (confirmed on the device), wider than the ZCL default of +/-2.5 deg C.
         // Same as m.customLocalTemperatureCalibrationRange({min: -10, max: 10}) in the repo, inlined so this
         // file also works on Z2M versions that do not have that helper yet.
@@ -719,24 +750,7 @@ const definition = {
             await reporting.humidity(endpoint, { min: 10, max: 300, change: 100 });
         }
         catch (_) { }
-        await safeReadEdge(endpoint, "genBasic", ["swBuildId", "dateCode"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["localTemp"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["occupiedHeatingSetpoint"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["occupiedCoolingSetpoint"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["systemMode"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["runningState"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["localTemperatureCalibration"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["pIHeatingDemand"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["programingOperMode"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["absMinHeatSetpointLimit"]);
-        await safeReadEdge(endpoint, "hvacThermostat", ["absMaxHeatSetpointLimit"]);
-        await safeReadEdge(endpoint, "hvacThermostat", [
-            0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x800c, 0x800d, 0x8011, 0x8012, 0x8013, 0x801b,
-            0x801d, 0x801f, 0x8020, 0x8021, 0x8022, 0x8023, 0x8025, 0x8026, 0x8029,
-        ]);
-        await safeReadEdge(endpoint, "hvacUserInterfaceCfg", ["keypadLockout", "tempDisplayMode"]);
-        await safeReadEdge(endpoint, "seMetering", ["currentSummDelivered", "divisor", "multiplier"]);
-        await safeReadEdge(endpoint, "haElectricalMeasurement", ["activePower", "rmsCurrent", "acPowerMultiplier", "acPowerDivisor"]);
+        await edgeReadAll(endpoint);
         device.powerSource = "Mains (single phase)";
         device.save();
     },
