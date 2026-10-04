@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 5ac22ad), i.e. exactly what goes into the pull request, for use until
+// (commit cb50c6a), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -626,7 +626,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 5ac22ad)",
+    description: "Zigbee Edge Thermostat (external converter, repo cb50c6a)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -779,7 +779,12 @@ const definition = {
             .withValueMin(0)
             .withValueMax(100)
             .withDescription('Output duty cycle when sensor_mode is "regulator".'),
-        e.numeric("regulator_cycle", ea.ALL).withUnit("min").withValueMin(0).withValueMax(30).withDescription("Regulator cycle length."),
+        e
+            .numeric("regulator_cycle", ea.ALL)
+            .withUnit("min")
+            .withValueMin(0)
+            .withValueMax(30)
+            .withDescription("Regulator cycle length. Stored by the device, but firmware 1.14 was seen to regulate with a fixed 3 min cycle regardless of this value."),
         e
             .enum("week_program", ea.STATE_GET, ["mon_fri_sat_sun", "mon_sat_sun", "no_time_off", "time_off"])
             .withDescription('Week program split set on the device (read-only): work days / days off. "no_time_off" = every day a work day, "time_off" = every day off. Changes made on the device show up at the next poll.'),

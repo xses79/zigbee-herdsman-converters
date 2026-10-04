@@ -1,6 +1,6 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-01, repo-kode `5ac22ad` (branch `claude/trusting-meitner-ga1p5l`), fastvare 1.14.
+Status per 2026-10-01, repo-kode `cb50c6a` (branch `claude/trusting-meitner-ga1p5l`), fastvare 1.14.
 
 ## Huskeliste
 
@@ -24,7 +24,6 @@ Status per 2026-10-01, repo-kode `5ac22ad` (branch `claude/trusting-meitner-ga1p
 5. `fault` (0x8006): bit 5 = External Sensor Error (bekreftet). Andre bits ukjent (vises som er0-er7).
 6. `window_state` (0x8002): åpent vindu-deteksjon i praksis.
 7. Klokke ved sommertid -> vintertid (25.10.2026): stemmer klokka på panelet etterpå med `auto_time` på?
-8. Regulator-modus (`sensor_mode: regulator`): varmer den etter `regulator_percentage` / `regulator_cycle`?
 
 ## Ferdig og bekreftet på termostaten
 
@@ -33,6 +32,8 @@ Status per 2026-10-01, repo-kode `5ac22ad` (branch `claude/trusting-meitner-ga1p
 - Samme testrunde på TermoTest (fastvare 1.12)
 - OTA: ingen fastvare på Z2M sin OTA-side; termostatene er oppdatert manuelt
 - `fault`: bit 5 = External Sensor Error
+- Regulator: `regulator_percentage` virker (50 % = 90 s på / 90 s av). `regulator_cycle` lagres men brukes ikke: fast 3 min syklus med verdi 1 og 4, også etter omstart av regulator-modus (fw 1.14)
+- `holiday_temp_set`: skriving bekreftet av termostaten; °C og °F lagres separat (begge skrives nå)
 - °F-display: klimakortet følger setpunkt og temperatur (0x8011/0x8012)
 - Feriedatoer som dager siden 1970 (10957 = ikke satt)
 
