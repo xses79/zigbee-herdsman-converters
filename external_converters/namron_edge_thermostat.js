@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit f14b107), i.e. exactly what goes into the pull request, for use until
+// (commit d0a61b6), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -299,7 +299,7 @@ const fzEdge = {
                         if (value === 1) {
                             writeEdgeHvac(msg.endpoint, 0x800b, edgeLocalTime(), DataType.UINT32)
                                 .then(() => writeEdgeHvac(msg.endpoint, 0x800a, 0, DataType.BOOLEAN))
-                                .then(() => msg.endpoint.read("hvacThermostat", [0x800b]))
+                                .then(() => msg.endpoint.read("hvacThermostat", [0x800a, 0x800b]))
                                 .catch(() => { });
                         }
                         break;
@@ -646,7 +646,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo f14b107)",
+    description: "Zigbee Edge Thermostat (external converter, repo d0a61b6)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
