@@ -11,16 +11,13 @@ Testet på Stue Gulvvarme (fastvare 1.14) og TermoTest (fastvare 1.12).
 4. **0x801c («regulationMode») og 0x801e («summerWinterSwitch»):** alltid 0, også i cool med Equipment = Water og med Auto Daylight Saving på.
 5. **Ferie- eller makstemperatur endret på panelet i °F-modus:** oppdateres °C-verdien som Z2M leser?
 
-## Neste
-
-- Standard ZCL ukesprogram: termostaten støtter setWeeklySchedule (0x01), getWeeklySchedule (0x02),
-  clearWeeklySchedule (0x03) og getRelayStatusLog (0x04) på hvacThermostat (funnet med deep_scan 2026-10-04).
-  Test getWeeklySchedule først (bare lesing).
-
 ## Ikke tilgjengelig over Zigbee (settes bare på panelet)
 
 - **Hysterese:** discover slutter på 0x8029, ingen produsentspesifikke attributter, 0x8045 og 0x100A gir
   UNSUPPORTED_ATTRIBUTE, og endring på panelet endrer ingen attributt. 0x8003 er ukesprogrammet, ikke hysterese.
+- **Standard ZCL ukesprogram:** discover oppgir set/get/clearWeeklySchedule (0x01-0x03) på hvacThermostat, men
+  getWeeklySchedule gir UNSUPPORTED_COMMAND (0x81), også med alle dager og begge modi (TermoTest, 2026-10-04).
+  Ukesprogrammet kan bare leses via 0xE002-meldingen og bare endres på panelet.
 - **Auto Daylight Saving** (vises når Auto Sync Time er Off): ingen rapport, 0x801e uendret.
 - **Normally Open/Closed** (ventil ved Water): ingen rapport.
 - **Intelligence, Equipment (electric/water), Idle backlight:** ingen rapport og ingen endrede attributter.
