@@ -1,20 +1,22 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-04, repo-kode `3abb154` (branch `claude/trusting-meitner-ga1p5l`).
+Status per 2026-10-04, repo-kode `ddde6cf` (branch `claude/trusting-meitner-ga1p5l`).
 Testet på Stue Gulvvarme (fastvare 1.14) og TermoTest (fastvare 1.12).
 
 ## Gjenstår å sjekke
 
 1. **Klokke ved overgang til vintertid (25.10.2026):** stemmer klokka på panelet etterpå med `auto_time` på?
 2. **`fault` (0x8006):** bare bit 5 er kjent. Andre biter vises som er0-er7 og navngis når de dukker opp.
-3. **0x8014-0x801a:** tomme tekstfelt på begge termostatene. Les 32788-32791 etter en endring på panelet.
-4. **Ferie- eller makstemperatur endret på panelet i °F-modus:** oppdateres °C-verdien som Z2M leser?
+3. **0x8014-0x801a:** tomme tekstfelt på begge termostatene og ikke brukt av noen kjent integrasjon. Sjekkes ved ny fastvare.
+4. **0x801c («regulationMode») og 0x801e («summerWinterSwitch»):** alltid 0, også i cool med Equipment = Water.
+5. **Ferie- eller makstemperatur endret på panelet i °F-modus:** oppdateres °C-verdien som Z2M leser?
 
 ## Ikke tilgjengelig over Zigbee (settes bare på panelet)
 
 - **Hysterese:** discover slutter på 0x8029, ingen produsentspesifikke attributter, 0x8045 og 0x100A gir
   UNSUPPORTED_ATTRIBUTE, og endring på panelet endrer ingen attributt. 0x8003 er ukesprogrammet, ikke hysterese.
 - **Intelligence, Equipment (electric/water), Idle backlight:** ingen rapport og ingen endrede attributter.
+  Equipment styrer om kjøling er lov: med Electric går `system_mode` cool rett tilbake til heat, med Water blir den stående (TermoTest).
 - **Regulator cycle (1-30 min):** 0x8007 henger ikke sammen med syklusen termostaten bruker. Skriving endrer
   ikke panel eller regulering, og endring på panelet rapporteres ikke.
 - **Videre:** spør Namron om fastvare som eksponerer hysterese (f.eks. 0x8045 som på Simplify), og kjør

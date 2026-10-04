@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 3abb154), i.e. exactly what goes into the pull request, for use until
+// (commit ddde6cf), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -634,7 +634,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 3abb154)",
+    description: "Zigbee Edge Thermostat (external converter, repo ddde6cf)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -773,7 +773,7 @@ const definition = {
             .withValueMin(10)
             .withValueMax(40)
             .withValueStep(0.5)
-            .withDescription("Cooling setpoint. The device has one setpoint on its display: writing this while heating also changes occupied_heating_setpoint."),
+            .withDescription("Cooling setpoint. The device has one setpoint on its display: writing this while heating also changes occupied_heating_setpoint. Cooling (system_mode cool) is only accepted with Equipment set to Water on the device; with Electric the device returns to heat."),
         e
             .enum("programming_operation_mode", ea.ALL, ["setpoint", "schedule", "eco"])
             .withDescription('Run mode. "setpoint" = manual, "schedule" = follow the weekly program, "eco" = ECO mode.'),
