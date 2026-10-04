@@ -1,6 +1,6 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-04, repo-kode `1e9689b` (branch `claude/trusting-meitner-ga1p5l`).
+Status per 2026-10-04, repo-kode `dbee19d` (branch `claude/trusting-meitner-ga1p5l`).
 Testet på Stue Gulvvarme (fastvare 1.14) og TermoTest (fastvare 1.12).
 
 ## Gjenstår å sjekke
