@@ -4,7 +4,7 @@ Status per 2026-10-04, repo-kode `9da7de8` (branch `claude/trusting-meitner-ga1p
 
 | Termostat | Zigbee (swBuildId / dateCode / OTA) | MCU (Simplify-appen) |
 | --- | --- | --- |
-| Stue Gulvvarme (0x64028ffffeb84671) | 1.14 / 20260421 | ikke sjekket |
+| Stue Gulvvarme (0x64028ffffeb84671) | 1.14 / 20260421 | 1.1.2 |
 | TermoTest (0x70d07efffea64529) | 1.14 / 20260415 / OTA 40 (fra 1.12 / 20241017 / OTA 36, oppdatert via Z2M med Homey-filen) | 1.1.3 (fra 1.1.2, via appen over Bluetooth) |
 
 Det meste er først testet på 1.12 (TermoTest) og 1.14 (Stue). Deep scan etter oppdateringene av TermoTest
