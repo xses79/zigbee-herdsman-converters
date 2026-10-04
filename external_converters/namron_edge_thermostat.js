@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit cb50c6a), i.e. exactly what goes into the pull request, for use until
+// (commit 603de99), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -626,7 +626,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo cb50c6a)",
+    description: "Zigbee Edge Thermostat (external converter, repo 603de99)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -772,7 +772,7 @@ const definition = {
             .withDescription("Convenience summary of which special mode is currently active (derived from the other attributes, read-only)."),
         e
             .enum("sensor_mode", ea.ALL, ["air", "floor", "air_floor", "external", "external_floor", "floor_percent", "regulator"])
-            .withDescription('Which sensor(s) control heating, or "regulator" for plain duty-cycle % control instead of a thermostat. A sensor mode changed on the device itself is not reported over Zigbee, so this shows the last mode set from Zigbee2MQTT.'),
+            .withDescription('Which sensor(s) control heating, or "regulator" for plain duty-cycle % control instead of a thermostat. A mode chosen on the device whose sensor is not connected is shown on the device but not reported, so this can then differ from the device.'),
         e
             .numeric("regulator_percentage", ea.ALL)
             .withUnit("%")
@@ -784,7 +784,7 @@ const definition = {
             .withUnit("min")
             .withValueMin(0)
             .withValueMax(30)
-            .withDescription("Regulator cycle length. Stored by the device, but firmware 1.14 was seen to regulate with a fixed 3 min cycle regardless of this value."),
+            .withDescription("Not linked to the regulator cycle the device uses (set on the device, 1-30 min): writing it does not change that cycle, and a change on the device is not reported (firmware 1.12 and 1.14)."),
         e
             .enum("week_program", ea.STATE_GET, ["mon_fri_sat_sun", "mon_sat_sun", "no_time_off", "time_off"])
             .withDescription('Week program split set on the device (read-only): work days / days off. "no_time_off" = every day a work day, "time_off" = every day off. Changes made on the device show up at the next poll.'),

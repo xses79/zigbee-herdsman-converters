@@ -1,6 +1,6 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-01, repo-kode `cb50c6a` (branch `claude/trusting-meitner-ga1p5l`), fastvare 1.14.
+Status per 2026-10-01, repo-kode `603de99` (branch `claude/trusting-meitner-ga1p5l`), fastvare 1.14.
 
 ## Huskeliste
 
@@ -14,7 +14,7 @@ Status per 2026-10-01, repo-kode `cb50c6a` (branch `claude/trusting-meitner-ga1p
    - Videre: spørre Namron om fastvare som eksponerer hysterese (f.eks. 0x8045 som på Simplify),
      og sjekke nye fastvareversjoner med discover når de kommer.
 
-3b. **Kun på panelet (ikke over Zigbee):** Equipment (electric/water), Idle backlight, hysterese, Intelligence. Sensor mode endret på panelet rapporteres ikke (0x8004 beholder gammel verdi).
+3b. **Kun på panelet (ikke over Zigbee):** Equipment (electric/water), Idle backlight, hysterese, Intelligence. Regulator cycle. Sensor mode endret på panelet rapporteres, unntatt modus uten tilkoblet føler.
     Equipment testet 2026-10-04: ingen rapport, ctrlSeqeOfOper (4) og 0x801c (0) uendret.
 3c. **0x8014-0x801a:** tomme tekstfelt på begge termostatene. Les 32788-32791 etter en endring på panelet.
 
@@ -32,7 +32,7 @@ Status per 2026-10-01, repo-kode `cb50c6a` (branch `claude/trusting-meitner-ga1p
 - Samme testrunde på TermoTest (fastvare 1.12)
 - OTA: ingen fastvare på Z2M sin OTA-side; termostatene er oppdatert manuelt
 - `fault`: bit 5 = External Sensor Error
-- Regulator: `regulator_percentage` virker (50 % = 90 s på / 90 s av). `regulator_cycle` lagres men brukes ikke: fast 3 min syklus med verdi 1 og 4, også etter omstart av regulator-modus (fw 1.14)
+- Regulator: `regulator_percentage` virker (50 % = 90 s på / 90 s av). `regulator_cycle` (0x8007) henger ikke sammen med syklusen på panelet (1-30 min): skriving endrer ikke panel/regulering, endring på panelet rapporteres ikke (fw 1.12 og 1.14)
 - `holiday_temp_set`: skriving bekreftet av termostaten; °C og °F lagres separat (begge skrives nå)
 - °F-display: klimakortet følger setpunkt og temperatur (0x8011/0x8012)
 - Feriedatoer som dager siden 1970 (10957 = ikke satt)
