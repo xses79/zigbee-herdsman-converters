@@ -663,6 +663,9 @@ const fzEdge = {
                     case 0x8002:
                         result["window_state"] = value ? "open" : "closed";
                         break;
+                    case 0x8003:
+                        result["hysteresis"] = (value as number) / 2;
+                        break;
                     case 0x8004:
                         result["sensor_mode"] = edgeSensorModeLookup[String(value as number)] ?? String(value);
                         break;
@@ -978,6 +981,22 @@ const tzEdge = {
         },
     } satisfies Tz.Converter,
 
+    // Stored in 0.5 °C steps (raw 1-20 = 0.5-10 °C, range from the user manual).
+    // Changes made on the panel are not reported, so read it back after writing.
+    hysteresis: {
+        key: ["hysteresis"],
+        convertSet: async (entity, key, value) => {
+            const num = Number(value);
+            if (Number.isNaN(num) || num < 0.5 || num > 10) throw new Error("hysteresis must be 0.5-10 (°C)");
+            const raw = Math.round(num * 2);
+            await writeThenReadEdgeHvac(entity, 0x8003, raw, Zcl.DataType.ENUM8, [0x8003]);
+            return {state: {hysteresis: raw / 2}};
+        },
+        convertGet: async (entity) => {
+            await entity.read("hvacThermostat", [0x8003]);
+        },
+    } satisfies Tz.Converter,
+
     regulator_percentage: {
         key: ["regulator_percentage"],
         convertSet: async (entity, key, value) => {
@@ -1119,6 +1138,7 @@ export const definitions: DefinitionWithExtend[] = [
             tzEdge.countdown_left,
             tzEdge.screen_on_time,
             tzEdge.panel_brightness,
+            tzEdge.hysteresis,
             tzEdge.regulator_percentage,
             tzEdge.regulator_cycle,
             tzEdge.holiday_temp_set,
@@ -1192,8 +1212,8 @@ export const definitions: DefinitionWithExtend[] = [
                 endpoint,
                 "hvacThermostat",
                 [
-                    0x8000, 0x8001, 0x8002, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x800c, 0x800d, 0x800e, 0x800f, 0x8010, 0x8011, 0x8012,
-                    0x8013, 0x801b, 0x801d, 0x801f, 0x8020, 0x8021, 0x8022, 0x8023, 0x8024, 0x8025, 0x8026, 0x8027, 0x8028, 0x8029,
+                    0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x800c, 0x800d, 0x800e, 0x800f, 0x8010, 0x8011,
+                    0x8012, 0x8013, 0x801b, 0x801d, 0x801f, 0x8020, 0x8021, 0x8022, 0x8023, 0x8024, 0x8025, 0x8026, 0x8027, 0x8028, 0x8029,
                 ],
             );
             await safeReadEdge(endpoint, "hvacUserInterfaceCfg", ["keypadLockout", "tempDisplayMode"]);
@@ -1242,6 +1262,15 @@ export const definitions: DefinitionWithExtend[] = [
                 .withValueMin(0)
                 .withValueMax(100)
                 .withDescription('Output duty cycle when sensor_mode is "regulator".'),
+            e
+                .numeric("hysteresis", ea.ALL)
+                .withUnit("°C")
+                .withValueMin(0.5)
+                .withValueMax(10)
+                .withValueStep(0.5)
+                .withDescription(
+                    "Temperature difference around the setpoint before heating/cooling switches. Changes made on the panel are not reported.",
+                ),
             e.numeric("regulator_cycle", ea.ALL).withUnit("min").withValueMin(0).withValueMax(30).withDescription("Regulator cycle length."),
             e.binary("frost", ea.ALL, "ON", "OFF").withDescription('Frost protection. Only usable while system_mode is "heat".'),
             e.binary("window_open_check", ea.ALL, "ON", "OFF").withDescription("Open-window detection (auto pause heating)."),
