@@ -14,7 +14,7 @@ Status per 2026-10-01, repo-kode `cef9241` (branch `claude/trusting-meitner-ga1p
    - Videre: spørre Namron om fastvare som eksponerer hysterese (f.eks. 0x8045 som på Simplify),
      og sjekke nye fastvareversjoner med discover når de kommer.
 
-3b. **Kun på panelet (ikke over Zigbee):** Equipment (electric/water), Idle backlight, hysterese, Intelligence.
+3b. **Kun på panelet (ikke over Zigbee):** Equipment (electric/water), Idle backlight, hysterese, Intelligence. Sensor mode endret på panelet rapporteres ikke (0x8004 beholder gammel verdi).
     Equipment testet 2026-10-04: ingen rapport, ctrlSeqeOfOper (4) og 0x801c (0) uendret.
 3c. **0x8014-0x801a:** tomme tekstfelt på begge termostatene. Les 32788-32791 etter en endring på panelet.
 
