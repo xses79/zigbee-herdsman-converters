@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit cef9241), i.e. exactly what goes into the pull request, for use until
+// (commit 3519ebd), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -274,8 +274,6 @@ const fzEdge = {
                                 faults.push(bit === 5 ? "external_sensor_error" : `er${bit}`);
                         }
                         result["fault"] = faults.length ? faults.join(",") : "none";
-                        // The device does not report a sensor mode changed on the display; a fault often follows one.
-                        msg.endpoint.read("hvacThermostat", [0x8004]).catch(() => { });
                         break;
                     }
                     case 0x8007:
@@ -420,8 +418,8 @@ const tzEdge = {
             if (value === "regulator" && meta.state?.["system_mode"] === "cool") {
                 throw new Error("Cannot switch to regulator mode while in cooling mode");
             }
-            // No optimistic state: the device accepts the write but falls back to "air" when the selected
-            // sensor is not connected, so sensor_mode comes from the read-back only.
+            // No optimistic state: the device acknowledges a mode whose sensor is not connected but keeps the
+            // previous mode, so sensor_mode comes from the read-back only.
             await writeThenReadEdgeHvac(entity, 0x8004, raw, DataType.ENUM8, [0x8004, 0x801d, 0x8007]);
         },
         convertGet: async (entity) => {
@@ -659,7 +657,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo cef9241)",
+    description: "Zigbee Edge Thermostat (external converter, repo 3519ebd)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -684,14 +682,13 @@ const definition = {
             option: e
                 .numeric("week_program_poll_interval", ea.SET)
                 .withValueMin(-1)
-                .withDescription("How often week_program and sensor_mode are read from the device, in seconds (default: 900, -1 to disable)."),
+                .withDescription("How often week_program is read from the device, in seconds (default: 900, -1 to disable)."),
             defaultIntervalSeconds: 900,
             poll: async (device) => {
                 const endpoint = device.getEndpoint(1);
                 if (!endpoint)
                     return;
-                // Neither is reported when changed on the display.
-                await endpoint.read("hvacThermostat", [0x8003, 0x8004]);
+                await endpoint.read("hvacThermostat", [0x8003]);
             },
         }),
         m.onOff({ powerOnBehavior: false }),
@@ -808,7 +805,7 @@ const definition = {
             .withDescription("Convenience summary of which special mode is currently active (derived from the other attributes, read-only)."),
         e
             .enum("sensor_mode", ea.ALL, ["air", "floor", "air_floor", "external", "external_floor", "floor_percent", "regulator"])
-            .withDescription('Which sensor(s) control heating, or "regulator" for plain duty-cycle % control instead of a thermostat.'),
+            .withDescription('Which sensor(s) control heating, or "regulator" for plain duty-cycle % control instead of a thermostat. A sensor mode changed on the device itself is not reported over Zigbee, so this shows the last mode set from Zigbee2MQTT.'),
         e
             .numeric("regulator_percentage", ea.ALL)
             .withUnit("%")
