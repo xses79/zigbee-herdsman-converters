@@ -21,16 +21,21 @@ Status per 2026-10-01, repo-kode `3519ebd` (branch `claude/trusting-meitner-ga1p
 ## Bør sjekkes
 
 3. `max_heat_temp` / `max_heat_temp_f` (0x8025/0x8026): skriv og se om panelet følger.
-4. `countdown_left`: teller den ned underveis, eller rapporteres den bare ved start/stopp? (kjør f.eks. 30 min)
 5. `fault` (0x8006): bit 5 = External Sensor Error (bekreftet). Andre bits ukjent (vises som er0-er7).
 6. `window_state` (0x8002): åpent vindu-deteksjon i praksis.
 7. Klokke ved sommertid -> vintertid (25.10.2026): stemmer klokka på panelet etterpå med `auto_time` på?
 8. Regulator-modus (`sensor_mode: regulator`): varmer den etter `regulator_percentage` / `regulator_cycle`?
-9. Strøm/effekt/energi: stemmer `power`, `current` og `energy` med faktisk last når den varmer?
-10. Samme testrunde på TermoTest (fastvare 1.12).
-11. OTA: finner Z2M fastvareoppdatering for enheten?
 
 ## Ferdig og bekreftet på termostaten
+
+- `countdown_left` (0x8024): rapporteres ved start, endring og stopp
+- Strøm/effekt/energi (`power`, `current`, `energy`)
+- Samme testrunde på TermoTest (fastvare 1.12)
+- OTA: ingen fastvare på Z2M sin OTA-side; termostatene er oppdatert manuelt
+- `fault`: bit 5 = External Sensor Error
+- °F-display: klimakortet følger setpunkt og temperatur (0x8011/0x8012)
+- Feriedatoer som dager siden 1970 (10957 = ikke satt)
+
 
 System mode, setpoint/schedule/eco, sensor mode, regulator %, regulator cycle, frost, window open check,
 panel brightness, screen on time, °C/°F, klokkesynk, av/på, kalibrering ±10, countdown + countdown_left,
