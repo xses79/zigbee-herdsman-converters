@@ -1,6 +1,6 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-04, repo-kode `9da7de8` (branch `claude/trusting-meitner-ga1p5l`).
+Status per 2026-10-04, repo-kode `51f673c` (branch `claude/trusting-meitner-ga1p5l`).
 
 | Termostat | Zigbee (swBuildId / dateCode / OTA) | MCU (Simplify-appen) |
 | --- | --- | --- |
