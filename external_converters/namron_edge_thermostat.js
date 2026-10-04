@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 3519ebd), i.e. exactly what goes into the pull request, for use until
+// (commit 5ac22ad), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -113,8 +113,8 @@ async function safeReadEdge(endpoint, cluster, attrs) {
 // The device answers a read of many attributes with only the first 14 or so, so the custom attributes are read in
 // small groups. Used by configure and on every Zigbee2MQTT start, so the state is filled in without a reconfigure.
 const edgeCustomAttributes = [
-    0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x800c, 0x800d, 0x8011, 0x8012, 0x8013, 0x801b, 0x801d, 0x801f,
-    0x8020, 0x8021, 0x8022, 0x8023, 0x8024, 0x8025, 0x8026, 0x8029,
+    0x8000, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006, 0x8007, 0x800a, 0x800b, 0x8011, 0x8012, 0x8013, 0x801d, 0x801f, 0x8020, 0x8021, 0x8022,
+    0x8023, 0x8024, 0x8025, 0x8029,
 ];
 async function edgeReadAll(endpoint) {
     await safeReadEdge(endpoint, "genBasic", ["swBuildId", "dateCode"]);
@@ -201,6 +201,9 @@ function edgeWeekProgramSchedule(bytes, fahrenheit) {
         entries.push(`${time} ${temperature}`);
     }
     return `Work days: ${entries.slice(0, 6).join(", ")} | Days off: ${entries.slice(6).join(", ")}`;
+}
+function edgeCelsiusToFahrenheit(value) {
+    return Math.round(((value * 9) / 5 + 32) * 10) / 10;
 }
 function edgeFahrenheitToCelsius(value) {
     return Math.round((((value / 100 - 32) * 5) / 9) * 10) / 10;
@@ -297,12 +300,6 @@ const fzEdge = {
                             result["clock_last_synced"] = String(value);
                         }
                         break;
-                    case 0x800c:
-                        result["min_heat_setpoint_limit_f"] = value / 100;
-                        break;
-                    case 0x800d:
-                        result["max_heat_setpoint_limit_f"] = value / 100;
-                        break;
                     // Fahrenheit setpoint and temperature (deg F x100). While the display is in Fahrenheit the device
                     // reports only these, not occupiedHeatingSetpoint/localTemp, so they are converted to deg C for the
                     // climate entity. In Celsius mode they are stale and ignored. Confirmed on firmware 1.12 and 1.14.
@@ -318,9 +315,6 @@ const fzEdge = {
                         break;
                     case 0x8013:
                         result["holiday_temp_set"] = value / 100;
-                        break;
-                    case 0x801b:
-                        result["holiday_temp_set_f"] = value / 100;
                         break;
                     case 0x801d:
                         result["regulator_percentage"] = value;
@@ -348,9 +342,6 @@ const fzEdge = {
                         break;
                     case 0x8025:
                         result["max_heat_temp"] = value / 10;
-                        break;
-                    case 0x8026:
-                        result["max_heat_temp_f"] = value / 10;
                         break;
                     case 0x8029:
                         result["screen_on_time"] = edgeScreenOnTimeLookup[String(value)] ?? String(value);
@@ -604,24 +595,13 @@ const tzEdge = {
             const num = Number(value);
             if (Number.isNaN(num) || num < 5 || num > 40)
                 throw new Error("holiday_temp_set must be 5-40");
+            // The device keeps a separate deg F value (0x801b) that it uses in Fahrenheit display mode; keep both in step.
             await writeEdgeHvac(entity, 0x8013, Math.round(num * 100), DataType.INT16);
+            await writeEdgeHvac(entity, 0x801b, Math.round(edgeCelsiusToFahrenheit(num) * 100), DataType.INT16);
             return { state: { holiday_temp_set: num } };
         },
         convertGet: async (entity) => {
             await entity.read("hvacThermostat", [0x8013]);
-        },
-    },
-    holiday_temp_set_f: {
-        key: ["holiday_temp_set_f"],
-        convertSet: async (entity, key, value) => {
-            const num = Number(value);
-            if (Number.isNaN(num) || num < 41 || num > 104)
-                throw new Error("holiday_temp_set_f must be 41-104");
-            await writeEdgeHvac(entity, 0x801b, Math.round(num * 100), DataType.INT16);
-            return { state: { holiday_temp_set_f: num } };
-        },
-        convertGet: async (entity) => {
-            await entity.read("hvacThermostat", [0x801b]);
         },
     },
     max_heat_temp: {
@@ -630,24 +610,13 @@ const tzEdge = {
             const num = Number(value);
             if (Number.isNaN(num) || num < 15 || num > 35)
                 throw new Error("max_heat_temp must be 15-35");
+            // The device keeps a separate deg F value (0x8026) that it uses in Fahrenheit display mode; keep both in step.
             await writeEdgeHvac(entity, 0x8025, Math.round(num * 10), DataType.INT16);
+            await writeEdgeHvac(entity, 0x8026, Math.round(edgeCelsiusToFahrenheit(num) * 10), DataType.INT16);
             return { state: { max_heat_temp: num } };
         },
         convertGet: async (entity) => {
             await entity.read("hvacThermostat", [0x8025]);
-        },
-    },
-    max_heat_temp_f: {
-        key: ["max_heat_temp_f"],
-        convertSet: async (entity, key, value) => {
-            const num = Number(value);
-            if (Number.isNaN(num) || num < 59 || num > 95)
-                throw new Error("max_heat_temp_f must be 59-95");
-            await writeEdgeHvac(entity, 0x8026, Math.round(num * 10), DataType.INT16);
-            return { state: { max_heat_temp_f: num } };
-        },
-        convertGet: async (entity) => {
-            await entity.read("hvacThermostat", [0x8026]);
         },
     },
 };
@@ -657,7 +626,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 3519ebd)",
+    description: "Zigbee Edge Thermostat (external converter, repo 5ac22ad)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -719,9 +688,7 @@ const definition = {
         tzEdge.regulator_percentage,
         tzEdge.regulator_cycle,
         tzEdge.holiday_temp_set,
-        tzEdge.holiday_temp_set_f,
         tzEdge.max_heat_temp,
-        tzEdge.max_heat_temp_f,
     ],
     configure: async (device, coordinatorEndpoint) => {
         // Defensive re-registration - onEvent('start') (used by
@@ -849,23 +816,11 @@ const definition = {
             .withValueMax(40)
             .withDescription("Target temperature while on vacation."),
         e
-            .numeric("holiday_temp_set_f", ea.ALL)
-            .withUnit(`${DEG}F`)
-            .withValueMin(41)
-            .withValueMax(104)
-            .withDescription(`Target temperature while on vacation (${DEG}F).`),
-        e
             .numeric("max_heat_temp", ea.ALL)
             .withUnit(`${DEG}C`)
             .withValueMin(15)
             .withValueMax(35)
             .withDescription("Upper limit for the heating setpoint."),
-        e
-            .numeric("max_heat_temp_f", ea.ALL)
-            .withUnit(`${DEG}F`)
-            .withValueMin(59)
-            .withValueMax(95)
-            .withDescription(`Upper limit for the heating setpoint (${DEG}F).`),
         e.binary("auto_time", ea.ALL, "ON", "OFF").withDescription("Let the device auto-sync its clock from the coordinator."),
         e.enum("sync_time", ea.SET, ["sync"]).withDescription('Write "sync" to push the current time to the device now.'),
         e.text("clock_last_synced", ea.STATE).withDescription("Local time the device's clock was last set to."),
@@ -877,8 +832,6 @@ const definition = {
         // The device has the absolute limits (0x0003/0x0004) but not minHeatSetpointLimit/maxHeatSetpointLimit (0x0015/0x0016).
         e.numeric("abs_min_heat_setpoint_limit", ea.STATE).withUnit(`${DEG}C`).withDescription("Lowest heating setpoint the device allows."),
         e.numeric("abs_max_heat_setpoint_limit", ea.STATE).withUnit(`${DEG}C`).withDescription("Highest heating setpoint the device allows."),
-        e.numeric("min_heat_setpoint_limit_f", ea.STATE).withUnit(`${DEG}F`).withDescription(`Lowest heating setpoint the device allows (${DEG}F).`),
-        e.numeric("max_heat_setpoint_limit_f", ea.STATE).withUnit(`${DEG}F`).withDescription(`Highest heating setpoint the device allows (${DEG}F).`),
     ],
 };
 
