@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 7eef33e), i.e. exactly what goes into the pull request, for use until
+// (commit 38287a4), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -202,6 +202,9 @@ function edgeWeekProgramSchedule(bytes, fahrenheit) {
     }
     return `Work days: ${entries.slice(0, 6).join(", ")} | Days off: ${entries.slice(6).join(", ")}`;
 }
+function edgeFahrenheitToCelsius(value) {
+    return Math.round((((value / 100 - 32) * 5) / 9) * 10) / 10;
+}
 const fzEdge = {
     week_program_schedule: {
         cluster: "namronEdgeWeekProgram",
@@ -293,11 +296,18 @@ const fzEdge = {
                     case 0x800d:
                         result["max_heat_setpoint_limit_f"] = value / 100;
                         break;
+                    // Fahrenheit setpoint and temperature (deg F x100). While the display is in Fahrenheit the device
+                    // reports only these, not occupiedHeatingSetpoint/localTemp, so they are converted to deg C for the
+                    // climate entity. In Celsius mode they are stale and ignored. Confirmed on firmware 1.12 and 1.14.
                     case 0x8011:
-                        result["occupied_heating_setpoint_f"] = value / 100;
+                        if (meta.state.temperature_display_mode === "fahrenheit") {
+                            result["occupied_heating_setpoint"] = edgeFahrenheitToCelsius(value);
+                        }
                         break;
                     case 0x8012:
-                        result["local_temperature_f"] = value / 100;
+                        if (meta.state.temperature_display_mode === "fahrenheit") {
+                            result["local_temperature"] = edgeFahrenheitToCelsius(value);
+                        }
                         break;
                     case 0x8013:
                         result["holiday_temp_set"] = value / 100;
@@ -637,7 +647,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 7eef33e)",
+    description: "Zigbee Edge Thermostat (external converter, repo 38287a4)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -852,11 +862,6 @@ const definition = {
         e.numeric("abs_max_heat_setpoint_limit", ea.STATE).withUnit(`${DEG}C`).withDescription("Highest heating setpoint the device allows."),
         e.numeric("min_heat_setpoint_limit_f", ea.STATE).withUnit(`${DEG}F`).withDescription(`Lowest heating setpoint the device allows (${DEG}F).`),
         e.numeric("max_heat_setpoint_limit_f", ea.STATE).withUnit(`${DEG}F`).withDescription(`Highest heating setpoint the device allows (${DEG}F).`),
-        e
-            .numeric("occupied_heating_setpoint_f", ea.STATE)
-            .withUnit(`${DEG}F`)
-            .withDescription("Device's own Fahrenheit-mode heating setpoint mirror."),
-        e.numeric("local_temperature_f", ea.STATE).withUnit(`${DEG}F`).withDescription("Device's own Fahrenheit-mode temperature mirror."),
     ],
 };
 
