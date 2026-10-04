@@ -664,7 +664,7 @@ const fzEdge = {
                         result["window_state"] = value ? "open" : "closed";
                         break;
                     case 0x8003:
-                        result["hysteresis"] = (value as number) / 2;
+                        result["hysteresis"] = ((value as number) + 1) / 2;
                         break;
                     case 0x8004:
                         result["sensor_mode"] = edgeSensorModeLookup[String(value as number)] ?? String(value);
@@ -981,16 +981,17 @@ const tzEdge = {
         },
     } satisfies Tz.Converter,
 
-    // Stored in 0.5 °C steps (raw 1-20 = 0.5-10 °C, range from the user manual).
+    // Stored as an index in 0.5 °C steps: raw 0-19 = 0.5-10 °C (range from the user manual,
+    // raw 0 confirmed as 0.5 °C on the panel).
     // Changes made on the panel are not reported, so read it back after writing.
     hysteresis: {
         key: ["hysteresis"],
         convertSet: async (entity, key, value) => {
             const num = Number(value);
             if (Number.isNaN(num) || num < 0.5 || num > 10) throw new Error("hysteresis must be 0.5-10 (°C)");
-            const raw = Math.round(num * 2);
+            const raw = Math.round(num * 2) - 1;
             await writeThenReadEdgeHvac(entity, 0x8003, raw, Zcl.DataType.ENUM8, [0x8003]);
-            return {state: {hysteresis: raw / 2}};
+            return {state: {hysteresis: (raw + 1) / 2}};
         },
         convertGet: async (entity) => {
             await entity.read("hvacThermostat", [0x8003]);
