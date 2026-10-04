@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 603de99), i.e. exactly what goes into the pull request, for use until
+// (commit 3abb154), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -589,6 +589,14 @@ const tzEdge = {
             await entity.read("hvacThermostat", [0x8007]);
         },
     },
+    // In Fahrenheit display mode localTemp is stale and the deg F mirror (0x8012) holds the current temperature.
+    local_temperature: {
+        key: ["local_temperature"],
+        convertGet: async (entity, key, meta) => {
+            const fahrenheit = meta.state?.temperature_display_mode === "fahrenheit";
+            await entity.read("hvacThermostat", fahrenheit ? [0x8012] : ["localTemp"]);
+        },
+    },
     holiday_temp_set: {
         key: ["holiday_temp_set"],
         convertSet: async (entity, key, value) => {
@@ -626,7 +634,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 603de99)",
+    description: "Zigbee Edge Thermostat (external converter, repo 3abb154)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -669,6 +677,8 @@ const definition = {
         tzEdge.system_mode,
         tz.thermostat_occupied_heating_setpoint,
         tz.thermostat_occupied_cooling_setpoint,
+        tz.thermostat_running_state,
+        tzEdge.local_temperature,
         tz.thermostat_local_temperature_calibration,
         tz.thermostat_temperature_display_mode,
         tz.thermostat_keypad_lockout,
