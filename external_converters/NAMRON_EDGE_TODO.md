@@ -1,6 +1,6 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-04, repo-kode `51f673c` (branch `claude/trusting-meitner-ga1p5l`).
+Status per 2026-10-04, repo-kode `8572970` (branch `claude/trusting-meitner-ga1p5l`).
 
 | Termostat | Zigbee (swBuildId / dateCode / OTA) | MCU (Simplify-appen) |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ Det meste er først testet på 1.12 (TermoTest) og 1.14 (Stue). Deep scan etter 
 - **Intelligence, Equipment (electric/water), Idle backlight:** ingen rapport og ingen endrede attributter.
   Equipment styrer om kjøling er lov: med Electric går `system_mode` cool rett tilbake til heat, med Water blir den stående (TermoTest).
 - **Regulator cycle (1-30 min):** settes bare på panelet. 0x8007 er Zigbee-modulens egen kopi: skriving godtas men når
-  aldri panel/regulering (prøvd direkte, les-før-skriv, les-skriv-les og sammen med sensorMode som Homey gjør).
+  aldri panel/regulering (prøvd direkte, les-før-skriv, les-skriv-les, sammen med sensorMode som Homey gjør, og m.numeric på 1.14 / MCU 1.1.3).
   Endring på panelet oppdaterer kopien bare noen ganger (lest 17 og 4 riktig, men 2 mens panelet viste 8).
   I Z2M bare lesing.
 - **Videre:** spør Namron om fastvare som eksponerer hysterese (f.eks. 0x8045 som på Simplify), og kjør
