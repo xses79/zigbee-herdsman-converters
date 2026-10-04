@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 4d77679), i.e. exactly what goes into the pull request, for use until
+// (commit 8b5ff2c), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -265,8 +265,17 @@ const fzEdge = {
                         result["panel_brightness"] = value;
                         break;
                     case 0x8006: {
-                        const bits = typeof value?.getBits === "function" ? value.getBits() : [];
-                        result["fault"] = bits.length ? bits.join(",") : "none";
+                        // Bitmap, arrives as a plain number. Bit 5 shows "External Sensor Error" on the display
+                        // (floor sensor selected but not connected); other bits use the er0-er7 names of Namron's own
+                        // Homey driver until their meaning is known.
+                        const faults = [];
+                        for (let bit = 0; bit < 8; bit++) {
+                            if (value & (1 << bit))
+                                faults.push(bit === 5 ? "external_sensor_error" : `er${bit}`);
+                        }
+                        result["fault"] = faults.length ? faults.join(",") : "none";
+                        // The device does not report a sensor mode changed on the display; a fault often follows one.
+                        msg.endpoint.read("hvacThermostat", [0x8004]).catch(() => { });
                         break;
                     }
                     case 0x8007:
@@ -536,6 +545,8 @@ const tzEdge = {
     // 0x8003 is not hysteresis but the week program setting (week_program above). The "Intelligence"
     // on/off setting is not reachable over Zigbee either. Discover Attributes on hvacThermostat ends at
     // 0x8029, and manufacturer-specific discover (0x126a) returns no attributes on any cluster.
+    // Likewise display-only (nothing reported or changed when set on the device): "Equipment" (electric/water)
+    // and "Idle backlight".
     screen_on_time: {
         key: ["screen_on_time"],
         convertSet: async (entity, key, value) => {
@@ -647,7 +658,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 4d77679)",
+    description: "Zigbee Edge Thermostat (external converter, repo 8b5ff2c)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -672,13 +683,14 @@ const definition = {
             option: e
                 .numeric("week_program_poll_interval", ea.SET)
                 .withValueMin(-1)
-                .withDescription("How often week_program is read from the device, in seconds (default: 900, -1 to disable)."),
+                .withDescription("How often week_program and sensor_mode are read from the device, in seconds (default: 900, -1 to disable)."),
             defaultIntervalSeconds: 900,
             poll: async (device) => {
                 const endpoint = device.getEndpoint(1);
                 if (!endpoint)
                     return;
-                await endpoint.read("hvacThermostat", [0x8003]);
+                // Neither is reported when changed on the display.
+                await endpoint.read("hvacThermostat", [0x8003, 0x8004]);
             },
         }),
         m.onOff({ powerOnBehavior: false }),
@@ -814,7 +826,12 @@ const definition = {
         e.enum("window_state", ea.STATE, ["open", "closed"]).withDescription("Open-window detection result."),
         e.binary("keypad_lockout", ea.ALL, "lock1", "unlock").withDescription("Physical button lock on the device."),
         e.enum("temperature_display_mode", ea.ALL, ["celsius", "fahrenheit"]).withDescription("Unit shown on the device's own screen."),
-        e.numeric("panel_brightness", ea.ALL).withUnit("%").withValueMin(1).withValueMax(100).withDescription("LCD backlight brightness."),
+        e
+            .numeric("panel_brightness", ea.ALL)
+            .withUnit("%")
+            .withValueMin(1)
+            .withValueMax(100)
+            .withDescription('Display brightness while in use ("Active backlight" on the device).'),
         e.enum("screen_on_time", ea.ALL, ["always_on", "10s", "30s", "60s"]).withDescription("How long the backlight stays on after a touch."),
         e
             .numeric("countdown_set", ea.ALL)
@@ -854,7 +871,9 @@ const definition = {
         e.binary("auto_time", ea.ALL, "ON", "OFF").withDescription("Let the device auto-sync its clock from the coordinator."),
         e.enum("sync_time", ea.SET, ["sync"]).withDescription('Write "sync" to push the current time to the device now.'),
         e.text("clock_last_synced", ea.STATE).withDescription("Local time the device's clock was last set to."),
-        e.text("fault", ea.STATE).withDescription('Active fault codes reported by the device, or "none".'),
+        e
+            .text("fault", ea.STATE)
+            .withDescription('Active faults reported by the device, or "none". "external_sensor_error" = floor/external sensor missing or faulty.'),
         e.text("firmware_version", ea.STATE).withDescription("Reported software build ID."),
         e.text("firmware_date", ea.STATE).withDescription("Reported firmware date code."),
         // The device has the absolute limits (0x0003/0x0004) but not minHeatSetpointLimit/maxHeatSetpointLimit (0x0015/0x0016).

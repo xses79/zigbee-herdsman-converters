@@ -1,6 +1,6 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-01, repo-kode `4d77679` (branch `claude/trusting-meitner-ga1p5l`), fastvare 1.14.
+Status per 2026-10-01, repo-kode `8b5ff2c` (branch `claude/trusting-meitner-ga1p5l`), fastvare 1.14.
 
 ## Huskeliste
 
@@ -14,11 +14,15 @@ Status per 2026-10-01, repo-kode `4d77679` (branch `claude/trusting-meitner-ga1p
    - Videre: spørre Namron om fastvare som eksponerer hysterese (f.eks. 0x8045 som på Simplify),
      og sjekke nye fastvareversjoner med discover når de kommer.
 
+3b. **Kun på panelet (ikke over Zigbee):** Equipment (electric/water), Idle backlight, hysterese, Intelligence.
+    Equipment testet 2026-10-04: ingen rapport, ctrlSeqeOfOper (4) og 0x801c (0) uendret.
+3c. **0x8014-0x801a:** tomme tekstfelt på begge termostatene. Les 32788-32791 etter en endring på panelet.
+
 ## Bør sjekkes
 
 3. `max_heat_temp` / `max_heat_temp_f` (0x8025/0x8026): skriv og se om panelet følger.
 4. `countdown_left`: teller den ned underveis, eller rapporteres den bare ved start/stopp? (kjør f.eks. 30 min)
-5. `fault` (0x8006): koble fra gulvføleren og se hvilken feilkode som kommer.
+5. `fault` (0x8006): bit 5 = External Sensor Error (bekreftet). Andre bits ukjent (vises som er0-er7).
 6. `window_state` (0x8002): åpent vindu-deteksjon i praksis.
 7. Klokke ved sommertid -> vintertid (25.10.2026): stemmer klokka på panelet etterpå med `auto_time` på?
 8. Regulator-modus (`sensor_mode: regulator`): varmer den etter `regulator_percentage` / `regulator_cycle`?
