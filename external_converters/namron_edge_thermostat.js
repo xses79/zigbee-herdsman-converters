@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit ddde6cf), i.e. exactly what goes into the pull request, for use until
+// (commit f14b107), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -208,6 +208,15 @@ function edgeCelsiusToFahrenheit(value) {
 function edgeFahrenheitToCelsius(value) {
     return Math.round((((value / 100 - 32) * 5) / 9) * 10) / 10;
 }
+// runningState is a bitmap. While cooling the device reports 258 (0x0102: bit 1 = cool plus a non-standard bit 8),
+// which fz.thermostat's lookup rejects with an exception that also drops the rest of the message.
+function edgeRunningState(value) {
+    if (value & 0x01)
+        return "heat";
+    if (value & 0x02)
+        return "cool";
+    return "idle";
+}
 const fzEdge = {
     week_program_schedule: {
         cluster: "namronEdgeWeekProgram",
@@ -222,10 +231,13 @@ const fzEdge = {
         cluster: "hvacThermostat",
         type: ["attributeReport", "readResponse"],
         convert: (model, msg, publish, options, meta) => {
-            const { programingOperMode, ...rest } = msg.data;
+            const { programingOperMode, runningState, ...rest } = msg.data;
             const result = Object.keys(rest).length > 0 ? (fz.thermostat.convert(model, { ...msg, data: rest }, publish, options, meta) ?? {}) : {};
             if (programingOperMode !== undefined) {
                 result.programming_operation_mode = edgeProgrammingOperationMode(programingOperMode);
+            }
+            if (runningState !== undefined) {
+                result.running_state = edgeRunningState(runningState);
             }
             return result;
         },
@@ -634,7 +646,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo ddde6cf)",
+    description: "Zigbee Edge Thermostat (external converter, repo f14b107)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
