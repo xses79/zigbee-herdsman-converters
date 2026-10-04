@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit d0a61b6), i.e. exactly what goes into the pull request, for use until
+// (commit 1e9689b), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -588,15 +588,10 @@ const tzEdge = {
             await entity.read("hvacThermostat", [0x801d]);
         },
     },
+    // Read-only: 0x8007 follows the cycle set on the device, but a write is acknowledged without reaching the
+    // regulation (the device kept its own cycle, confirmed on firmware 1.12 and 1.14). Changes are not reported.
     regulator_cycle: {
         key: ["regulator_cycle"],
-        convertSet: async (entity, key, value) => {
-            const num = Math.round(Number(value));
-            if (Number.isNaN(num) || num < 0 || num > 30)
-                throw new Error("regulator_cycle must be 0-30");
-            await writeEdgeHvac(entity, 0x8007, num, DataType.UINT8);
-            return { state: { regulator_cycle: num } };
-        },
         convertGet: async (entity) => {
             await entity.read("hvacThermostat", [0x8007]);
         },
@@ -646,7 +641,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo d0a61b6)",
+    description: "Zigbee Edge Thermostat (external converter, repo 1e9689b)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -671,13 +666,13 @@ const definition = {
             option: e
                 .numeric("week_program_poll_interval", ea.SET)
                 .withValueMin(-1)
-                .withDescription("How often week_program is read from the device, in seconds (default: 900, -1 to disable)."),
+                .withDescription("How often week_program and regulator_cycle are read from the device, in seconds (default: 900, -1 to disable)."),
             defaultIntervalSeconds: 900,
             poll: async (device) => {
                 const endpoint = device.getEndpoint(1);
                 if (!endpoint)
                     return;
-                await endpoint.read("hvacThermostat", [0x8003]);
+                await endpoint.read("hvacThermostat", [0x8003, 0x8007]);
             },
         }),
         m.onOff({ powerOnBehavior: false }),
@@ -802,11 +797,9 @@ const definition = {
             .withValueMax(100)
             .withDescription('Output duty cycle when sensor_mode is "regulator".'),
         e
-            .numeric("regulator_cycle", ea.ALL)
+            .numeric("regulator_cycle", ea.STATE_GET)
             .withUnit("min")
-            .withValueMin(0)
-            .withValueMax(30)
-            .withDescription("Not linked to the regulator cycle the device uses (set on the device, 1-30 min): writing it does not change that cycle, and a change on the device is not reported (firmware 1.12 and 1.14)."),
+            .withDescription("Regulator cycle length (1-30 min), set on the device. Read-only: writing it over Zigbee does not change the cycle the device uses. Not reported when changed, so it is read periodically."),
         e
             .enum("week_program", ea.STATE_GET, ["mon_fri_sat_sun", "mon_sat_sun", "no_time_off", "time_off"])
             .withDescription('Week program split set on the device (read-only): work days / days off. "no_time_off" = every day a work day, "time_off" = every day off. Changes made on the device show up at the next poll.'),

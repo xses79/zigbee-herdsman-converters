@@ -1,6 +1,6 @@
 # Namron Zigbee Edge thermostat - huskeliste
 
-Status per 2026-10-04, repo-kode `d0a61b6` (branch `claude/trusting-meitner-ga1p5l`).
+Status per 2026-10-04, repo-kode `1e9689b` (branch `claude/trusting-meitner-ga1p5l`).
 Testet på Stue Gulvvarme (fastvare 1.14) og TermoTest (fastvare 1.12).
 
 ## Gjenstår å sjekke
@@ -22,8 +22,8 @@ Testet på Stue Gulvvarme (fastvare 1.14) og TermoTest (fastvare 1.12).
 - **Normally Open/Closed** (ventil ved Water): ingen rapport.
 - **Intelligence, Equipment (electric/water), Idle backlight:** ingen rapport og ingen endrede attributter.
   Equipment styrer om kjøling er lov: med Electric går `system_mode` cool rett tilbake til heat, med Water blir den stående (TermoTest).
-- **Regulator cycle (1-30 min):** 0x8007 henger ikke sammen med syklusen termostaten bruker. Skriving endrer
-  ikke panel eller regulering, og endring på panelet rapporteres ikke.
+- **Regulator cycle (1-30 min), skriving:** 0x8007 følger syklusen satt på panelet (lest 17, så 4), men skriving fra
+  Z2M når ikke reguleringen. Endring rapporteres ikke. I Z2M nå bare lesing, lest hvert 15. min.
 - **Videre:** spør Namron om fastvare som eksponerer hysterese (f.eks. 0x8045 som på Simplify), og kjør
   discover på nytt når ny fastvare kommer.
 
