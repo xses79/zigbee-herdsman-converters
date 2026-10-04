@@ -2,7 +2,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 8572970), i.e. exactly what goes into the pull request, for use until
+// (commit f722296), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -274,13 +274,12 @@ const fzEdge = {
                         result["panel_brightness"] = value;
                         break;
                     case 0x8006: {
-                        // Bitmap, arrives as a plain number. Bit 5 shows "External Sensor Error" on the display
-                        // (floor sensor selected but not connected); other bits use the er0-er7 names of Namron's own
-                        // Homey driver until their meaning is known.
+                        // Bitmap, arrives as a plain number. Bit n is ERRn in the manual; bit 5 (ERR5, external sensor)
+                        // is confirmed on the display. Bit 0 has no ERR code and keeps the er0 name of Namron's Homey driver.
                         const faults = [];
                         for (let bit = 0; bit < 8; bit++) {
                             if (value & (1 << bit))
-                                faults.push(bit === 5 ? "external_sensor_error" : `er${bit}`);
+                                faults.push(edgeFaultNames[bit] ?? `er${bit}`);
                         }
                         result["fault"] = faults.length ? faults.join(",") : "none";
                         break;
@@ -352,6 +351,16 @@ const fzEdge = {
             return result;
         },
     },
+};
+// fault (0x8006) bit -> ERR code in the manual (ERR1-ERR7).
+const edgeFaultNames = {
+    1: "zigbee_error",
+    2: "bluetooth_error",
+    3: "internal_sensor_error",
+    4: "floor_sensor_error",
+    5: "external_sensor_error",
+    6: "overheat_error",
+    7: "overload_error",
 };
 const tzEdge = {
     // Setting the mode uses the device's own custom commands (0x07/0x08)
@@ -597,7 +606,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external converter, repo 8572970)",
+    description: "Zigbee Edge Thermostat (external converter, repo f722296)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -839,7 +848,8 @@ const definition = {
         e.text("clock_last_synced", ea.STATE).withDescription("Local time the device's clock was last set to."),
         e
             .text("fault", ea.STATE)
-            .withDescription('Active faults reported by the device, or "none". "external_sensor_error" = floor/external sensor missing or faulty.'),
+            .withDescription('Active faults reported by the device, or "none": zigbee_error (ERR1), bluetooth_error (ERR2), internal_sensor_error (ERR3), ' +
+            "floor_sensor_error (ERR4), external_sensor_error (ERR5), overheat_error (ERR6), overload_error (ERR7)."),
         e.text("firmware_version", ea.STATE).withDescription("Reported software build ID."),
         e.text("firmware_date", ea.STATE).withDescription("Reported firmware date code."),
         // The device has the absolute limits (0x0003/0x0004) but not minHeatSetpointLimit/maxHeatSetpointLimit (0x0015/0x0016).

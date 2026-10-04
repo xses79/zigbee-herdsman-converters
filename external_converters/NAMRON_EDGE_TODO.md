@@ -13,7 +13,7 @@ Det meste er først testet på 1.12 (TermoTest) og 1.14 (Stue). Deep scan etter 
 ## Gjenstår å sjekke
 
 1. **Klokke ved overgang til vintertid (25.10.2026):** stemmer klokka på panelet etterpå med `auto_time` på?
-2. **`fault` (0x8006):** bare bit 5 er kjent. Andre biter vises som er0-er7 og navngis når de dukker opp.
+2. **`fault` (0x8006):** navn fra manualen lagt inn, bit n = ERRn (1 zigbee, 2 bluetooth, 3 intern sensor, 4 gulvsensor, 5 ekstern sensor, 6 overoppheting, 7 overlast). Bare bit 5 er bekreftet på displayet. Bit 0 har ingen ERR-kode og vises som er0.
 3. **0x8014-0x801a:** tomme tekstfelt på begge termostatene og ikke brukt av noen kjent integrasjon. Uendret etter 1.14 / MCU 1.1.3. Sjekkes ved ny fastvare.
 4. **0x801c («regulationMode») og 0x801e («summerWinterSwitch»):** alltid 0, også i cool med Equipment = Water, med Auto Daylight Saving på og etter oppdatering til 1.14 / MCU 1.1.3.
 5. **Ferie- eller makstemperatur endret på panelet i °F-modus:** oppdateres °C-verdien som Z2M leser?
@@ -49,7 +49,7 @@ Det meste er først testet på 1.12 (TermoTest) og 1.14 (Stue). Deep scan etter 
 - System mode, setpoint/schedule/eco, av/på, kalibrering ±10, frost, window open check
 - Sensor mode fra Z2M (modus uten tilkoblet føler avvises). Endring på panelet rapporteres,
   unntatt modus uten tilkoblet føler
-- `fault`: bit 5 = External Sensor Error
+- `fault`: bit 5 = External Sensor Error (ERR5); bit n = ERRn etter manualen
 - Regulator: `regulator_percentage` virker (50 % = like lang tid på og av)
 - `panel_brightness` = Active backlight, `screen_on_time`
 - °C/°F-display: klimakortet følger setpunkt og temperatur også i °F-modus (0x8011/0x8012)
