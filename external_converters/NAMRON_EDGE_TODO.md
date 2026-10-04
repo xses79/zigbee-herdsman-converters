@@ -8,13 +8,21 @@ Testet på Stue Gulvvarme (fastvare 1.14) og TermoTest (fastvare 1.12).
 1. **Klokke ved overgang til vintertid (25.10.2026):** stemmer klokka på panelet etterpå med `auto_time` på?
 2. **`fault` (0x8006):** bare bit 5 er kjent. Andre biter vises som er0-er7 og navngis når de dukker opp.
 3. **0x8014-0x801a:** tomme tekstfelt på begge termostatene og ikke brukt av noen kjent integrasjon. Sjekkes ved ny fastvare.
-4. **0x801c («regulationMode») og 0x801e («summerWinterSwitch»):** alltid 0, også i cool med Equipment = Water.
+4. **0x801c («regulationMode») og 0x801e («summerWinterSwitch»):** alltid 0, også i cool med Equipment = Water og med Auto Daylight Saving på.
 5. **Ferie- eller makstemperatur endret på panelet i °F-modus:** oppdateres °C-verdien som Z2M leser?
+
+## Neste
+
+- Standard ZCL ukesprogram: termostaten støtter setWeeklySchedule (0x01), getWeeklySchedule (0x02),
+  clearWeeklySchedule (0x03) og getRelayStatusLog (0x04) på hvacThermostat (funnet med deep_scan 2026-10-04).
+  Test getWeeklySchedule først (bare lesing).
 
 ## Ikke tilgjengelig over Zigbee (settes bare på panelet)
 
 - **Hysterese:** discover slutter på 0x8029, ingen produsentspesifikke attributter, 0x8045 og 0x100A gir
   UNSUPPORTED_ATTRIBUTE, og endring på panelet endrer ingen attributt. 0x8003 er ukesprogrammet, ikke hysterese.
+- **Auto Daylight Saving** (vises når Auto Sync Time er Off): ingen rapport, 0x801e uendret.
+- **Normally Open/Closed** (ventil ved Water): ingen rapport.
 - **Intelligence, Equipment (electric/water), Idle backlight:** ingen rapport og ingen endrede attributter.
   Equipment styrer om kjøling er lov: med Electric går `system_mode` cool rett tilbake til heat, med Water blir den stående (TermoTest).
 - **Regulator cycle (1-30 min):** 0x8007 henger ikke sammen med syklusen termostaten bruker. Skriving endrer
@@ -36,7 +44,7 @@ Testet på Stue Gulvvarme (fastvare 1.14) og TermoTest (fastvare 1.12).
 - Countdown og `countdown_left`
 - `window_state`: åpent vindu oppdaget og rapportert (TermoTest ute, fall på ~1 °C/min mens den varmet)
 - Tastelås (lock1/unlock)
-- Klokkesynk (Unix lokal tid)
+- Klokkesynk (Unix lokal tid). Auto Sync Time endret på panelet rapporteres, og Z2M synker klokka automatisk
 - `week_program` (0x8003) og `week_program_schedule` (0xE002, også i °F)
 - Strøm, effekt og energi
 - Alle verdier leses ved oppstart (i grupper på 8)
