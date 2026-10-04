@@ -4,7 +4,7 @@
 // Models: 4566702 / 4566703 / 4512783 / 4512784 (zigbeeModel T11_ZG)
 //
 // Built from src/devices/namron.ts on branch claude/trusting-meitner-ga1p5l
-// (commit 3abb154), i.e. exactly what goes into the pull request, for use until
+// (commit 9da7de8), i.e. exactly what goes into the pull request, for use until
 // a Zigbee2MQTT release includes it. No test tools, no debug logging.
 // Contains no regex literals and no backslashes, so the Z2M converter editor can save it.
 // Remove this file once your Z2M release contains the same changes.
@@ -210,6 +210,15 @@ function edgeCelsiusToFahrenheit(value) {
 function edgeFahrenheitToCelsius(value) {
     return Math.round((((value / 100 - 32) * 5) / 9) * 10) / 10;
 }
+// runningState is a bitmap. While cooling the device reports 258 (0x0102: bit 1 = cool plus a non-standard bit 8),
+// which fz.thermostat's lookup rejects with an exception that also drops the rest of the message.
+function edgeRunningState(value) {
+    if (value & 0x01)
+        return "heat";
+    if (value & 0x02)
+        return "cool";
+    return "idle";
+}
 const fzEdge = {
     week_program_schedule: {
         cluster: "namronEdgeWeekProgram",
@@ -224,10 +233,13 @@ const fzEdge = {
         cluster: "hvacThermostat",
         type: ["attributeReport", "readResponse"],
         convert: (model, msg, publish, options, meta) => {
-            const { programingOperMode, ...rest } = msg.data;
+            const { programingOperMode, runningState, ...rest } = msg.data;
             const result = Object.keys(rest).length > 0 ? (fz.thermostat.convert(model, { ...msg, data: rest }, publish, options, meta) ?? {}) : {};
             if (programingOperMode !== undefined) {
                 result.programming_operation_mode = edgeProgrammingOperationMode(programingOperMode);
+            }
+            if (runningState !== undefined) {
+                result.running_state = edgeRunningState(runningState);
             }
             return result;
         },
@@ -289,7 +301,7 @@ const fzEdge = {
                         if (value === 1) {
                             writeEdgeHvac(msg.endpoint, 0x800b, edgeLocalTime(), DataType.UINT32)
                                 .then(() => writeEdgeHvac(msg.endpoint, 0x800a, 0, DataType.BOOLEAN))
-                                .then(() => msg.endpoint.read("hvacThermostat", [0x800b]))
+                                .then(() => msg.endpoint.read("hvacThermostat", [0x800a, 0x800b]))
                                 .catch(() => { });
                         }
                         break;
@@ -578,15 +590,12 @@ const tzEdge = {
             await entity.read("hvacThermostat", [0x801d]);
         },
     },
+    // Read-only. The regulator cycle (1-30 min) is set on the device. 0x8007 is the Zigbee module's own copy: writes
+    // are acknowledged but never reach the display or the regulation (tried a plain write, read-before-write,
+    // read-write-read and a write together with sensorMode as Namron's Homey app does; firmware 1.12 and 1.14), and
+    // changes made on the device only sometimes update it.
     regulator_cycle: {
         key: ["regulator_cycle"],
-        convertSet: async (entity, key, value) => {
-            const num = Math.round(Number(value));
-            if (Number.isNaN(num) || num < 0 || num > 30)
-                throw new Error("regulator_cycle must be 0-30");
-            await writeEdgeHvac(entity, 0x8007, num, DataType.UINT8);
-            return { state: { regulator_cycle: num } };
-        },
         convertGet: async (entity) => {
             await entity.read("hvacThermostat", [0x8007]);
         },
@@ -636,7 +645,7 @@ const definition = {
     zigbeeModel: ["4566702", "4566703", "4512783", "4512784"],
     model: "4566702",
     vendor: "Namron",
-    description: "Zigbee Edge Thermostat (external TEST converter v8, repo 3abb154)",
+    description: "Zigbee Edge Thermostat (external TEST converter v8, repo 9da7de8)",
     ota: true,
     extend: [
         edgeThermostatCommands(),
@@ -775,7 +784,7 @@ const definition = {
             .withValueMin(10)
             .withValueMax(40)
             .withValueStep(0.5)
-            .withDescription("Cooling setpoint. The device has one setpoint on its display: writing this while heating also changes occupied_heating_setpoint."),
+            .withDescription("Cooling setpoint. The device has one setpoint on its display: writing this while heating also changes occupied_heating_setpoint. Cooling (system_mode cool) is only accepted with Equipment set to Water on the device; with Electric the device returns to heat."),
         e
             .enum("programming_operation_mode", ea.ALL, ["setpoint", "schedule", "eco"])
             .withDescription('Run mode. "setpoint" = manual, "schedule" = follow the weekly program, "eco" = ECO mode.'),
@@ -792,11 +801,9 @@ const definition = {
             .withValueMax(100)
             .withDescription('Output duty cycle when sensor_mode is "regulator".'),
         e
-            .numeric("regulator_cycle", ea.ALL)
+            .numeric("regulator_cycle", ea.STATE_GET)
             .withUnit("min")
-            .withValueMin(0)
-            .withValueMax(30)
-            .withDescription("Not linked to the regulator cycle the device uses (set on the device, 1-30 min): writing it does not change that cycle, and a change on the device is not reported (firmware 1.12 and 1.14)."),
+            .withDescription("Regulator cycle length as held by the Zigbee module (read-only). The cycle is set on the device (1-30 min) and this value is not always updated from it, so it can differ from the display."),
         e
             .enum("week_program", ea.STATE_GET, ["mon_fri_sat_sun", "mon_sat_sun", "no_time_off", "time_off"])
             .withDescription('Week program split set on the device (read-only): work days / days off. "no_time_off" = every day a work day, "time_off" = every day off. Changes made on the device show up at the next poll.'),
