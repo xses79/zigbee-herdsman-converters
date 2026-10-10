@@ -3346,7 +3346,7 @@ export const definitions: DefinitionWithExtend[] = [
         zigbeeModel: ["4512795", "4512796"],
         model: "4512795",
         vendor: "Namron",
-        description: "Simplify thermostat",
+        description: "Simplify thermostat (white)",
         whiteLabel: [{vendor: "Namron", model: "4512796", description: "Simplify thermostat (black)", fingerprint: [{modelID: "4512796"}]}],
         ota: true,
         fromZigbee: [fzSimplifyThermostat.thermostat, fzSimplifyThermostat.system_mode, fzSimplifyThermostat.week_program],
