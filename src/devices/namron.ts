@@ -10,7 +10,7 @@ import * as namron from "../lib/namron";
 import * as reporting from "../lib/reporting";
 import * as store from "../lib/store";
 import * as tuya from "../lib/tuya";
-import type {DefinitionWithExtend, Fz, KeyValue, Tz} from "../lib/types";
+import type {Configure, DefinitionWithExtend, Fz, KeyValue, ModernExtend, Tz, Zh} from "../lib/types";
 import * as utils from "../lib/utils";
 
 const NS = "zhc:namron";
@@ -524,7 +524,7 @@ const tzLocalSimplifyDimmer4512791 = {
 };
 // End Simplify Dimmer (4512791)
 // ─── Namron Simplify Thermostat (4512795/4512796) ────────────────────────────
-// systemMode (0x001C) is vendor-defined as Work_mode, same tags as the week program mode nibble.
+// systemMode (0x001C) is vendor-defined as Work_mode, same values as the week program mode nibble.
 const simplifyThermostatPresetLookup: KeyValue = {manual: 0, home: 1, away: 2, sleep: 3, holiday: 4};
 // hvacRelayState (0x0029) is vendor-defined as Work_state.
 const simplifyThermostatRunningStateLookup: KeyValue = {heat: 0x00, idle: 0x10};
@@ -550,6 +550,7 @@ const simplifyThermostatSensorResistanceLookup: KeyValue = {
 // Bits of Active_display_elements (0x8042) and Idle_display_elements (0x8043), in display menu order.
 const simplifyThermostatDisplayElements = ["humidity", "time", "day", "date", "setpoint", "connection"];
 const simplifyThermostatDisplayAttributes = {active: 0x8042, idle: 0x8043} as const;
+// Bit n of Fault (0x8006) is shown as ERRn on the display, see the error code table in the user manual.
 const simplifyThermostatErrors: Record<number, string> = {
     1: "zigbee error",
     2: "bluetooth error",
@@ -560,219 +561,356 @@ const simplifyThermostatErrors: Record<number, string> = {
     7: "overload",
 };
 
+// The device has a very small binding and reporting table (TABLE_FULL / INSUFFICIENT_SPACE),
+// so configure steps must never abort the rest of the configuration.
+async function simplifyTry(name: string, step: () => Promise<unknown>): Promise<void> {
+    try {
+        await step();
+    } catch (error) {
+        logger.warning(`4512795 configure: ${name} failed (${(error as Error).message})`, NS);
+    }
+}
+
 // The device requests the time by setting Time_sync_flag (0x800A) to 1 (it repeats this every second while
-// Auto_time is on). Answer by writing Time_sync_value (0x800B) and clearing the flag, same as the Edge thermostat.
-// biome-ignore lint/suspicious/noExplicitAny: endpoint type is complex generic
-async function simplifySyncTime(endpoint: any): Promise<void> {
-    // Unix timestamp (seconds since 1970, a 2000 based value showed year 2096 on the display) in local time,
-    // since the thermostat shows the received time as is.
+// Auto_time is on). Answer by writing Time_sync_value (0x800B) and clearing the flag.
+async function simplifySyncTime(endpoint: Zh.Endpoint | Zh.Group): Promise<void> {
+    // Unix timestamp in local time, the thermostat shows the received time as is
+    // (a 2000 based timestamp showed year 2096 on the display).
     const ts = Math.round(Date.now() / 1000) - new Date().getTimezoneOffset() * 60;
     await endpoint.write("hvacThermostat", {[0x800b]: {value: ts, type: Zcl.DataType.UINT32}});
     await endpoint.write("hvacThermostat", {[0x800a]: {value: 0, type: Zcl.DataType.BOOLEAN}});
 }
 
-const fzSimplifyThermostat = {
-    thermostat: {
-        cluster: "hvacThermostat",
-        type: ["attributeReport", "readResponse"],
-        convert: (model, msg, publish, options, meta) => {
-            const result: KeyValue = {};
-            const data = msg.data;
-            if (data.localTemp !== undefined && data.localTemp !== -0x8000) {
-                result.local_temperature = utils.precisionRound(data.localTemp / 100, 2);
-            }
-            if (data.localTemperatureCalibration !== undefined) {
-                result.local_temperature_calibration = utils.precisionRound(data.localTemperatureCalibration / 10, 1);
-            }
-            if (data.occupiedHeatingSetpoint !== undefined) {
-                result.occupied_heating_setpoint = utils.precisionRound(data.occupiedHeatingSetpoint / 100, 2);
-            }
-            if (data.pIHeatingDemand !== undefined) {
-                result.pi_heating_demand = data.pIHeatingDemand;
-            }
-            if (data.systemMode !== undefined) {
-                const preset = utils.getKey(simplifyThermostatPresetLookup, data.systemMode);
-                if (preset !== undefined) result.preset = preset;
-            }
-            if (data.runningState !== undefined) {
-                const runningState = utils.getKey(simplifyThermostatRunningStateLookup, data.runningState);
-                if (runningState !== undefined) result.running_state = runningState;
-            }
-            for (const [screen, attribute] of Object.entries(simplifyThermostatDisplayAttributes)) {
-                const elements = (data as KeyValue)[attribute] as number | undefined;
-                if (elements !== undefined) {
-                    simplifyThermostatDisplayElements.forEach((element, bit) => {
-                        result[`${screen}_display_${element}`] = elements & (1 << bit) ? "ON" : "OFF";
-                    });
-                }
-            }
-            const fault = (data as KeyValue)[0x8006] as number | undefined;
-            if (fault !== undefined) {
-                // Bit n is shown as ERRn on the display, see the error code table in the user manual.
-                const codes = [0, 1, 2, 3, 4, 5, 6, 7]
-                    .filter((bit) => fault & (1 << bit))
-                    .map((bit) => `ERR${bit}${simplifyThermostatErrors[bit] ? ` ${simplifyThermostatErrors[bit]}` : ""}`);
-                result.fault = codes.length ? codes.join(", ") : "none";
-            }
-            if ((data as KeyValue)[0x800a] === 1 && msg.type === "attributeReport") {
-                const last = store.getValue(meta.device, "simplify_time_sync", 0) as number;
-                if (Date.now() - last > 10000) {
-                    store.putValue(meta.device, "simplify_time_sync", Date.now());
-                    simplifySyncTime(msg.endpoint).catch((error) => logger.warning(`4512795 time sync failed (${(error as Error).message})`, NS));
-                }
-            }
-            return result;
+const simplifyThermostatExtend = {
+    // Climate: hvacThermostat uses vendor specific values for systemMode (presets) and runningState, so m.thermostat
+    // (fz.thermostat) can't be used. On/off is done with the On/Off cluster (Shut_down function point).
+    climate: (): ModernExtend => {
+        const fromZigbee = [
+            {
+                cluster: "hvacThermostat",
+                type: ["attributeReport", "readResponse"],
+                convert: (model, msg, publish, options, meta) => {
+                    const result: KeyValue = {};
+                    const data = msg.data;
+                    if (data.localTemp !== undefined && data.localTemp !== -0x8000) {
+                        result.local_temperature = utils.precisionRound(data.localTemp / 100, 2);
+                    }
+                    if (data.localTemperatureCalibration !== undefined) {
+                        result.local_temperature_calibration = utils.precisionRound(data.localTemperatureCalibration / 10, 1);
+                    }
+                    if (data.occupiedHeatingSetpoint !== undefined) {
+                        result.occupied_heating_setpoint = utils.precisionRound(data.occupiedHeatingSetpoint / 100, 2);
+                    }
+                    if (data.pIHeatingDemand !== undefined) {
+                        result.pi_heating_demand = data.pIHeatingDemand;
+                    }
+                    if (data.systemMode !== undefined) {
+                        const preset = utils.getKey(simplifyThermostatPresetLookup, data.systemMode);
+                        if (preset !== undefined) result.preset = preset;
+                    }
+                    if (data.runningState !== undefined) {
+                        const runningState = utils.getKey(simplifyThermostatRunningStateLookup, data.runningState);
+                        if (runningState !== undefined) result.running_state = runningState;
+                    }
+                    return result;
+                },
+            } satisfies Fz.Converter<"hvacThermostat", undefined, ["attributeReport", "readResponse"]>,
+            {
+                cluster: "genOnOff",
+                type: ["attributeReport", "readResponse"],
+                convert: (model, msg, publish, options, meta) => {
+                    if (msg.data.onOff !== undefined) {
+                        return {system_mode: msg.data.onOff ? "heat" : "off"};
+                    }
+                },
+            } satisfies Fz.Converter<"genOnOff", undefined, ["attributeReport", "readResponse"]>,
+        ];
+        const toZigbee: Tz.Converter[] = [
+            {
+                key: ["system_mode"],
+                convertSet: async (entity, key, value, meta) => {
+                    utils.validateValue(value, ["off", "heat"]);
+                    await entity.command("genOnOff", value === "off" ? "off" : "on", {}, utils.getOptions(meta.mapped, entity));
+                    return {state: {system_mode: value}};
+                },
+                convertGet: async (entity, key, meta) => {
+                    await entity.read("genOnOff", ["onOff"]);
+                },
+            },
+            {
+                key: ["preset"],
+                convertSet: async (entity, key, value, meta) => {
+                    await entity.write("hvacThermostat", {systemMode: utils.getFromLookup(value, simplifyThermostatPresetLookup) as number});
+                    return {state: {preset: value}};
+                },
+                convertGet: async (entity, key, meta) => {
+                    await entity.read("hvacThermostat", ["systemMode"]);
+                },
+            },
+            tz.thermostat_local_temperature,
+            tz.thermostat_local_temperature_calibration,
+            tz.thermostat_occupied_heating_setpoint,
+            tz.thermostat_pi_heating_demand,
+            tz.thermostat_running_state,
+        ];
+        const exposes = [
+            e
+                .climate()
+                .withSystemMode(["off", "heat"], ea.ALL)
+                .withPreset(Object.keys(simplifyThermostatPresetLookup))
+                .withLocalTemperature()
+                .withSetpoint("occupied_heating_setpoint", 5, 40, 0.5)
+                .withLocalTemperatureCalibration(-10, 10, 0.5)
+                .withRunningState(["idle", "heat"])
+                .withPiHeatingDemand(),
+        ];
+        const configure: Configure[] = [
+            async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                // Only these two binds fit in the binding table of the device, the other clusters report without one.
+                await simplifyTry("bind hvacThermostat", () => endpoint.bind("hvacThermostat", coordinatorEndpoint));
+                await simplifyTry("bind genOnOff", () => endpoint.bind("genOnOff", coordinatorEndpoint));
+                await simplifyTry("report localTemp", () => reporting.thermostatTemperature(endpoint));
+                await simplifyTry("report occupiedHeatingSetpoint", () => reporting.thermostatOccupiedHeatingSetpoint(endpoint));
+                await simplifyTry("report pIHeatingDemand", () => reporting.thermostatPIHeatingDemand(endpoint));
+                await simplifyTry("report systemMode", () => reporting.thermostatSystemMode(endpoint));
+                await simplifyTry("report onOff", () => reporting.onOff(endpoint));
+                await simplifyTry("read thermostat", () =>
+                    endpoint.read("hvacThermostat", ["localTemp", "occupiedHeatingSetpoint", "systemMode", "runningState"]),
+                );
+                await simplifyTry("read thermostat", () => endpoint.read("hvacThermostat", ["localTemperatureCalibration", "pIHeatingDemand"]));
+                await simplifyTry("read onOff", () => endpoint.read("genOnOff", ["onOff"]));
+            },
+        ];
+        return {fromZigbee, toZigbee, exposes, configure, isModernExtend: true};
+    },
+    // Power and energy: reporting can't be configured on the device (INSUFFICIENT_SPACE), so poll instead.
+    metering: (): ModernExtend[] => [
+        m.electricityMeter({configureReporting: false}),
+        m.poll({
+            key: "namron_4512795_metering",
+            optionKey: "measurement_poll_interval",
+            option: e
+                .numeric("measurement_poll_interval", ea.SET)
+                .withValueMin(-1)
+                .withDescription("Polling interval for power and energy (default: 60s, -1 to disable)"),
+            defaultIntervalSeconds: 60,
+            poll: async (device) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.read("haElectricalMeasurement", ["activePower", "rmsCurrent", "rmsVoltage"]);
+                await endpoint.read("seMetering", ["currentSummDelivered"]);
+            },
+        }),
+        {
+            configure: [
+                async (device) => {
+                    const endpoint = device.getEndpoint(1);
+                    await simplifyTry("read electrical scaling", () => reporting.readEletricalMeasurementMultiplierDivisors(endpoint));
+                    await simplifyTry("read metering scaling", () => reporting.readMeteringMultiplierDivisor(endpoint));
+                },
+            ],
+            isModernExtend: true,
         },
-    } satisfies Fz.Converter<"hvacThermostat", undefined, ["attributeReport", "readResponse"]>,
-    system_mode: {
-        cluster: "genOnOff",
-        type: ["attributeReport", "readResponse"],
-        convert: (model, msg, publish, options, meta) => {
-            if (msg.data.onOff !== undefined) {
-                return {system_mode: msg.data.onOff ? "heat" : "off"};
-            }
-        },
-    } satisfies Fz.Converter<"genOnOff", undefined, ["attributeReport", "readResponse"]>,
+    ],
+    timeSync: (): ModernExtend => {
+        const fromZigbee = [
+            {
+                cluster: "hvacThermostat",
+                type: ["attributeReport"],
+                convert: (model, msg, publish, options, meta) => {
+                    if ((msg.data as KeyValue)[0x800a] !== 1) return;
+                    const last = store.getValue(meta.device, "simplify_time_sync", 0) as number;
+                    if (Date.now() - last > 10000) {
+                        store.putValue(meta.device, "simplify_time_sync", Date.now());
+                        simplifySyncTime(msg.endpoint).catch((error) => logger.warning(`4512795 time sync failed (${(error as Error).message})`, NS));
+                    }
+                },
+            } satisfies Fz.Converter<"hvacThermostat", undefined, ["attributeReport"]>,
+        ];
+        const toZigbee: Tz.Converter[] = [
+            {
+                key: ["sync_time"],
+                convertSet: async (entity, key, value, meta) => {
+                    await simplifySyncTime(entity);
+                },
+            },
+        ];
+        const exposes = [
+            e.enum("sync_time", ea.SET, ["sync"]).withDescription("Synchronize the thermostat clock with the current time").withCategory("config"),
+        ];
+        const configure: Configure[] = [
+            async (device) => {
+                await simplifyTry("time sync", () => simplifySyncTime(device.getEndpoint(1)));
+            },
+        ];
+        return {fromZigbee, toZigbee, exposes, configure, isModernExtend: true};
+    },
+    // Active/idle display elements: one bit per element in a bitmap per screen, exposed as one switch per element.
+    displayElements: (): ModernExtend => {
+        const fromZigbee = [
+            {
+                cluster: "hvacThermostat",
+                type: ["attributeReport", "readResponse"],
+                convert: (model, msg, publish, options, meta) => {
+                    const result: KeyValue = {};
+                    for (const [screen, attribute] of Object.entries(simplifyThermostatDisplayAttributes)) {
+                        const elements = (msg.data as KeyValue)[attribute] as number | undefined;
+                        if (elements !== undefined) {
+                            simplifyThermostatDisplayElements.forEach((element, bit) => {
+                                result[`${screen}_display_${element}`] = elements & (1 << bit) ? "ON" : "OFF";
+                            });
+                        }
+                    }
+                    return result;
+                },
+            } satisfies Fz.Converter<"hvacThermostat", undefined, ["attributeReport", "readResponse"]>,
+        ];
+        const toZigbee: Tz.Converter[] = [
+            {
+                key: Object.keys(simplifyThermostatDisplayAttributes).flatMap((screen) =>
+                    simplifyThermostatDisplayElements.map((element) => `${screen}_display_${element}`),
+                ),
+                convertSet: async (entity, key, value, meta) => {
+                    utils.validateValue(value, ["ON", "OFF"]);
+                    const [screen, , element] = key.split("_") as [keyof typeof simplifyThermostatDisplayAttributes, string, string];
+                    const attribute = simplifyThermostatDisplayAttributes[screen];
+                    const bit = simplifyThermostatDisplayElements.indexOf(element);
+                    // Read-modify-write so the other elements on the same screen are kept.
+                    const current = ((await entity.read("hvacThermostat", [attribute])) as KeyValue)[attribute] as number;
+                    const elements = value === "ON" ? current | (1 << bit) : current & ~(1 << bit);
+                    await entity.write("hvacThermostat", {[attribute]: {value: elements, type: Zcl.DataType.BITMAP8}});
+                    return {state: {[key]: value}};
+                },
+                convertGet: async (entity, key, meta) => {
+                    const screen = key.split("_")[0] as keyof typeof simplifyThermostatDisplayAttributes;
+                    await entity.read("hvacThermostat", [simplifyThermostatDisplayAttributes[screen]]);
+                },
+            },
+        ];
+        const exposes = Object.keys(simplifyThermostatDisplayAttributes).flatMap((screen) =>
+            simplifyThermostatDisplayElements.map((element) =>
+                e
+                    .binary(`${screen}_display_${element}`, ea.ALL, "ON", "OFF")
+                    .withDescription(`Show ${element} on the ${screen} screen`)
+                    .withCategory("config"),
+            ),
+        );
+        const configure: Configure[] = [
+            async (device) => {
+                await simplifyTry("read display elements", () => device.getEndpoint(1).read("hvacThermostat", [0x8042, 0x8043]));
+            },
+        ];
+        return {fromZigbee, toZigbee, exposes, configure, isModernExtend: true};
+    },
+    fault: (): ModernExtend => {
+        const fromZigbee = [
+            {
+                cluster: "hvacThermostat",
+                type: ["attributeReport", "readResponse"],
+                convert: (model, msg, publish, options, meta) => {
+                    const fault = (msg.data as KeyValue)[0x8006] as number | undefined;
+                    if (fault === undefined) return;
+                    const codes = [0, 1, 2, 3, 4, 5, 6, 7]
+                        .filter((bit) => fault & (1 << bit))
+                        .map((bit) => `ERR${bit}${simplifyThermostatErrors[bit] ? ` ${simplifyThermostatErrors[bit]}` : ""}`);
+                    return {fault: codes.length ? codes.join(", ") : "none"};
+                },
+            } satisfies Fz.Converter<"hvacThermostat", undefined, ["attributeReport", "readResponse"]>,
+        ];
+        const toZigbee: Tz.Converter[] = [
+            {
+                key: ["fault"],
+                convertGet: async (entity, key, meta) => {
+                    await entity.read("hvacThermostat", [0x8006]);
+                },
+            },
+        ];
+        const exposes = [e.text("fault", ea.STATE_GET).withDescription("Error codes shown on the display (ERR1-ERR7)").withCategory("diagnostic")];
+        const configure: Configure[] = [
+            async (device) => {
+                await simplifyTry("read fault", () => device.getEndpoint(1).read("hvacThermostat", [0x8006]));
+            },
+        ];
+        return {fromZigbee, toZigbee, exposes, configure, isModernExtend: true};
+    },
     // Week program cluster 0xE002 sends command 0x07 with a 32 byte octet string: 8 entries of
     // [hour, minute, mode nibble << 4 | temperature high nibble, temperature low byte], temperature x10.
-    // The first 6 entries are for work days, the last 2 for the weekend.
-    week_program: {
-        cluster: 0xe002,
-        type: ["raw"],
-        convert: (model, msg, publish, options, meta) => {
-            const data: number[] = Array.from(msg.data);
-            const headerLength = data[0] & 0x04 ? 5 : 3;
-            if (data[headerLength - 1] !== 0x07) return;
-            const length = data[headerLength];
-            const payload = data.slice(headerLength + 1, headerLength + 1 + length);
-            if (payload.length !== 32) return;
-            const entries: string[] = [];
-            for (let i = 0; i < payload.length; i += 4) {
-                const [hour, minute, high, low] = payload.slice(i, i + 4);
-                const mode = utils.getKey(simplifyThermostatPresetLookup, high >> 4, "unknown");
-                const temperature = (((high & 0x0f) << 8) | low) / 10;
-                entries.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${temperature}C ${mode}`);
-            }
-            return {week_program_workdays: entries.slice(0, 6).join(", "), week_program_weekend: entries.slice(6).join(", ")};
-        },
-    } satisfies Fz.Converter<0xe002, undefined, ["raw"]>,
+    // The first 6 entries are for work days, the last 2 for the weekend. Sent by the device on every change.
+    weekProgram: (): ModernExtend => {
+        const fromZigbee = [
+            {
+                cluster: 0xe002,
+                type: ["raw"],
+                convert: (model, msg, publish, options, meta) => {
+                    const data: number[] = Array.from(msg.data);
+                    const headerLength = data[0] & 0x04 ? 5 : 3;
+                    if (data[headerLength - 1] !== 0x07) return;
+                    const length = data[headerLength];
+                    const payload = data.slice(headerLength + 1, headerLength + 1 + length);
+                    if (payload.length !== 32) return;
+                    const entries: string[] = [];
+                    for (let i = 0; i < payload.length; i += 4) {
+                        const [hour, minute, high, low] = payload.slice(i, i + 4);
+                        const mode = utils.getKey(simplifyThermostatPresetLookup, high >> 4, "unknown");
+                        const temperature = (((high & 0x0f) << 8) | low) / 10;
+                        entries.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${temperature}C ${mode}`);
+                    }
+                    return {week_program_workdays: entries.slice(0, 6).join(", "), week_program_weekend: entries.slice(6).join(", ")};
+                },
+            } satisfies Fz.Converter<0xe002, undefined, ["raw"]>,
+        ];
+        const exposes = [
+            e.text("week_program_workdays", ea.STATE).withDescription("Week program for work days (time, temperature, mode)"),
+            e.text("week_program_weekend", ea.STATE).withDescription("Week program for the weekend (time, temperature, mode)"),
+        ];
+        return {fromZigbee, exposes, isModernExtend: true};
+    },
+    temperature: (name: string, attribute: number, description: string, min: number, max: number, scale: number) =>
+        m.numeric({
+            name,
+            cluster: "hvacThermostat",
+            attribute: {ID: attribute, type: Zcl.DataType.INT16},
+            description,
+            unit: "°C",
+            valueMin: min,
+            valueMax: max,
+            valueStep: 0.5,
+            scale,
+            entityCategory: "config",
+        }),
+    switch: (name: string, attribute: number, description: string, access: "STATE_GET" | "ALL" = "ALL") =>
+        m.binary({
+            name,
+            cluster: "hvacThermostat",
+            attribute: {ID: attribute, type: Zcl.DataType.BOOLEAN},
+            valueOn: ["ON", 1],
+            valueOff: ["OFF", 0],
+            description,
+            access,
+            entityCategory: access === "ALL" ? "config" : "diagnostic",
+        }),
+    enum: (name: string, attribute: number, lookup: KeyValue, description: string) =>
+        m.enumLookup({
+            name,
+            cluster: "hvacThermostat",
+            attribute: {ID: attribute, type: Zcl.DataType.ENUM8},
+            lookup,
+            description,
+            entityCategory: "config",
+        }),
+    number: (name: string, attribute: number, type: Zcl.DataType, description: string, unit: string, min: number, max: number, step = 1) =>
+        m.numeric({
+            name,
+            cluster: "hvacThermostat",
+            attribute: {ID: attribute, type},
+            description,
+            unit,
+            valueMin: min,
+            valueMax: max,
+            valueStep: step,
+            entityCategory: "config",
+        }),
 };
-
-const tzSimplifyThermostat = {
-    // On/Off cluster is the Shut_down function point, exposed as climate system_mode off/heat.
-    system_mode: {
-        key: ["system_mode"],
-        convertSet: async (entity, key, value, meta) => {
-            utils.validateValue(value, ["off", "heat"]);
-            await entity.command("genOnOff", value === "off" ? "off" : "on", {}, utils.getOptions(meta.mapped, entity));
-            return {state: {system_mode: value}};
-        },
-        convertGet: async (entity, key, meta) => {
-            await entity.read("genOnOff", ["onOff"]);
-        },
-    } satisfies Tz.Converter,
-    preset: {
-        key: ["preset"],
-        convertSet: async (entity, key, value, meta) => {
-            await entity.write("hvacThermostat", {systemMode: utils.getFromLookup(value, simplifyThermostatPresetLookup) as number});
-            return {state: {preset: value}};
-        },
-        convertGet: async (entity, key, meta) => {
-            await entity.read("hvacThermostat", ["systemMode"]);
-        },
-    } satisfies Tz.Converter,
-    display_elements: {
-        key: Object.keys(simplifyThermostatDisplayAttributes).flatMap((screen) =>
-            simplifyThermostatDisplayElements.map((element) => `${screen}_display_${element}`),
-        ),
-        convertSet: async (entity, key, value, meta) => {
-            utils.validateValue(value, ["ON", "OFF"]);
-            const [screen, , element] = key.split("_") as [keyof typeof simplifyThermostatDisplayAttributes, string, string];
-            const attribute = simplifyThermostatDisplayAttributes[screen];
-            const bit = simplifyThermostatDisplayElements.indexOf(element);
-            // Read-modify-write so the other elements on the same screen are kept.
-            const current = ((await entity.read("hvacThermostat", [attribute])) as KeyValue)[attribute] as number;
-            const elements = value === "ON" ? current | (1 << bit) : current & ~(1 << bit);
-            await entity.write("hvacThermostat", {[attribute]: {value: elements, type: Zcl.DataType.BITMAP8}});
-            return {state: {[key]: value}};
-        },
-        convertGet: async (entity, key, meta) => {
-            const screen = key.split("_")[0] as keyof typeof simplifyThermostatDisplayAttributes;
-            await entity.read("hvacThermostat", [simplifyThermostatDisplayAttributes[screen]]);
-        },
-    } satisfies Tz.Converter,
-    fault: {
-        key: ["fault"],
-        convertGet: async (entity, key, meta) => {
-            await entity.read("hvacThermostat", [0x8006]);
-        },
-    } satisfies Tz.Converter,
-    sync_time: {
-        key: ["sync_time"],
-        convertSet: async (entity, key, value, meta) => {
-            await simplifySyncTime(entity);
-            return {};
-        },
-    } satisfies Tz.Converter,
-};
-
-const simplifyThermostatTemperature = (name: string, attribute: number, description: string, min: number, max: number, scale: number) =>
-    m.numeric({
-        name,
-        cluster: "hvacThermostat",
-        attribute: {ID: attribute, type: Zcl.DataType.INT16},
-        description,
-        unit: "°C",
-        valueMin: min,
-        valueMax: max,
-        valueStep: 0.5,
-        scale,
-        entityCategory: "config",
-    });
-
-const simplifyThermostatSwitch = (name: string, attribute: number, description: string, access: "STATE_GET" | "ALL" = "ALL") =>
-    m.binary({
-        name,
-        cluster: "hvacThermostat",
-        attribute: {ID: attribute, type: Zcl.DataType.BOOLEAN},
-        valueOn: ["ON", 1],
-        valueOff: ["OFF", 0],
-        description,
-        access,
-        entityCategory: access === "ALL" ? "config" : "diagnostic",
-    });
-
-const simplifyThermostatEnum = (name: string, attribute: number, lookup: KeyValue, description: string) =>
-    m.enumLookup({
-        name,
-        cluster: "hvacThermostat",
-        attribute: {ID: attribute, type: Zcl.DataType.ENUM8},
-        lookup,
-        description,
-        entityCategory: "config",
-    });
-
-const simplifyThermostatNumber = (
-    name: string,
-    attribute: number,
-    type: Zcl.DataType,
-    description: string,
-    unit: string,
-    min: number,
-    max: number,
-    step = 1,
-) =>
-    m.numeric({
-        name,
-        cluster: "hvacThermostat",
-        attribute: {ID: attribute, type},
-        description,
-        unit,
-        valueMin: min,
-        valueMax: max,
-        valueStep: step,
-        entityCategory: "config",
-    });
 // ─── Namron Simplify Thermostat END ──────────────────────────────────────────
 // ─── Namron Zigbee Edge Thermostat (4566702/4566703/4512783/4512784) ──────────
 const EDGE_EPOCH_OFFSET = 946684800; // seconds between 1970-01-01 and 2000-01-01
@@ -3349,61 +3487,17 @@ export const definitions: DefinitionWithExtend[] = [
         description: "Simplify thermostat (white)",
         whiteLabel: [{vendor: "Namron", model: "4512796", description: "Simplify thermostat (black)", fingerprint: [{modelID: "4512796"}]}],
         ota: true,
-        fromZigbee: [fzSimplifyThermostat.thermostat, fzSimplifyThermostat.system_mode, fzSimplifyThermostat.week_program],
-        toZigbee: [
-            tzSimplifyThermostat.system_mode,
-            tzSimplifyThermostat.preset,
-            tzSimplifyThermostat.sync_time,
-            tzSimplifyThermostat.fault,
-            tzSimplifyThermostat.display_elements,
-            tz.thermostat_local_temperature,
-            tz.thermostat_local_temperature_calibration,
-            tz.thermostat_occupied_heating_setpoint,
-            tz.thermostat_pi_heating_demand,
-            tz.thermostat_running_state,
-        ],
-        exposes: [
-            e
-                .climate()
-                .withSystemMode(["off", "heat"], ea.ALL)
-                .withPreset(Object.keys(simplifyThermostatPresetLookup))
-                .withLocalTemperature()
-                .withSetpoint("occupied_heating_setpoint", 5, 40, 0.5)
-                .withLocalTemperatureCalibration(-10, 10, 0.5)
-                .withRunningState(["idle", "heat"])
-                .withPiHeatingDemand(),
-            e.enum("sync_time", ea.SET, ["sync"]).withDescription("Synchronize the thermostat clock with the current time").withCategory("config"),
-            e.text("fault", ea.STATE_GET).withDescription("Error codes shown on the display (ERR1-ERR7)").withCategory("diagnostic"),
-            ...Object.keys(simplifyThermostatDisplayAttributes).flatMap((screen) =>
-                simplifyThermostatDisplayElements.map((element) =>
-                    e
-                        .binary(`${screen}_display_${element}`, ea.ALL, "ON", "OFF")
-                        .withDescription(`Show ${element} on the ${screen} screen`)
-                        .withCategory("config"),
-                ),
-            ),
-            e.text("week_program_workdays", ea.STATE).withDescription("Week program for work days (time, temperature, mode)"),
-            e.text("week_program_weekend", ea.STATE).withDescription("Week program for the weekend (time, temperature, mode)"),
-        ],
         extend: [
+            // Climate first, so its binds get the few free entries in the binding table of the device.
+            simplifyThermostatExtend.climate(),
             m.identify(),
+            // Humidity is reported without binding, but binding/reporting configuration fails (TABLE_FULL).
             m.humidity({reporting: false}),
-            m.electricityMeter({configureReporting: false}),
-            // The device rejects reporting configuration for metering (INSUFFICIENT_SPACE), so poll instead.
-            m.poll({
-                key: "namron_4512795_metering",
-                optionKey: "measurement_poll_interval",
-                option: e
-                    .numeric("measurement_poll_interval", ea.SET)
-                    .withValueMin(-1)
-                    .withDescription("Polling interval for power and energy (default: 60s, -1 to disable)"),
-                defaultIntervalSeconds: 60,
-                poll: async (device) => {
-                    const endpoint = device.getEndpoint(1);
-                    await endpoint.read("haElectricalMeasurement", ["activePower", "rmsCurrent", "rmsVoltage"]);
-                    await endpoint.read("seMetering", ["currentSummDelivered"]);
-                },
-            }),
+            ...simplifyThermostatExtend.metering(),
+            simplifyThermostatExtend.timeSync(),
+            simplifyThermostatExtend.fault(),
+            simplifyThermostatExtend.displayElements(),
+            simplifyThermostatExtend.weekProgram(),
             m.binary({
                 name: "child_lock",
                 cluster: "hvacUserInterfaceCfg",
@@ -3412,13 +3506,6 @@ export const definitions: DefinitionWithExtend[] = [
                 valueOff: ["UNLOCK", 0],
                 description: "Locks all buttons on the thermostat (no lock icon is shown on the display)",
             }),
-            simplifyThermostatSwitch("window_open_check", 0x8000, "Enable open window detection"),
-            simplifyThermostatSwitch("window_open", 0x8002, "Open window detected", "STATE_GET"),
-            simplifyThermostatSwitch("frost_protection", 0x8001, "Enable frost protection"),
-            simplifyThermostatSwitch("auto_time", 0x8022, "Automatically set time"),
-            simplifyThermostatSwitch("adaptive_function", 0x8035, "Adaptive heating"),
-            simplifyThermostatSwitch("idle_screen", 0x803d, "Show idle screen"),
-            simplifyThermostatSwitch("schedule", 0x803f, "Enable week schedule"),
             m.binary({
                 name: "system_lock",
                 cluster: "hvacThermostat",
@@ -3428,28 +3515,61 @@ export const definitions: DefinitionWithExtend[] = [
                 description: "Locks access to the settings menu, the setpoint can still be changed",
                 entityCategory: "config",
             }),
-            simplifyThermostatEnum("work_days", 0x8003, {"5+2": 0, "6+1": 1, "7+0": 2, "0+7": 3}, "Work days used by the week schedule"),
-            simplifyThermostatEnum("sensor_mode", 0x8004, {air: 0, floor: 1, external: 2}, "Temperature sensor used for regulation"),
-            simplifyThermostatEnum(
+            simplifyThermostatExtend.switch("window_open_check", 0x8000, "Enable open window detection"),
+            simplifyThermostatExtend.switch("window_open", 0x8002, "Open window detected", "STATE_GET"),
+            simplifyThermostatExtend.switch("frost_protection", 0x8001, "Enable frost protection"),
+            simplifyThermostatExtend.switch("auto_time", 0x8022, "Automatically set time"),
+            simplifyThermostatExtend.switch("adaptive_function", 0x8035, "Adaptive heating"),
+            simplifyThermostatExtend.switch("idle_screen", 0x803d, "Show idle screen"),
+            simplifyThermostatExtend.switch("schedule", 0x803f, "Enable week schedule"),
+            simplifyThermostatExtend.enum("work_days", 0x8003, {"5+2": 0, "6+1": 1, "7+0": 2, "0+7": 3}, "Work days used by the week schedule"),
+            simplifyThermostatExtend.enum("sensor_mode", 0x8004, {air: 0, floor: 1, external: 2}, "Temperature sensor used for regulation"),
+            simplifyThermostatExtend.enum(
                 "schedule_snooze",
                 0x8040,
                 {none: 0, "3h": 1, "6h": 2, "12h": 3, day: 4, week: 5},
                 "Temporarily pause the week schedule",
             ),
-            simplifyThermostatEnum("control_mode", 0x8041, {thermostat: 0, power_regulator: 1}, "Thermostat or power regulator mode"),
-            simplifyThermostatEnum("theme", 0x8044, {dark: 0, light: 1}, "Display theme"),
-            simplifyThermostatEnum(
+            simplifyThermostatExtend.enum("control_mode", 0x8041, {thermostat: 0, power_regulator: 1}, "Thermostat or power regulator mode"),
+            simplifyThermostatExtend.enum("theme", 0x8044, {dark: 0, light: 1}, "Display theme"),
+            simplifyThermostatExtend.enum(
                 "floor_protection_type",
                 0x8046,
                 // 4 is set by the device itself when no floor sensor is configured.
                 {none: 0, wood: 1, stone: 2, custom: 3, no_floor_sensor: 4},
                 "Floor type, determines the floor temperature limit",
             ),
-            simplifyThermostatTemperature("holiday_temperature", 0x8013, "Setpoint in holiday mode", 5, 40, 100),
-            simplifyThermostatTemperature("home_temperature", 0x8039, "Setpoint in home mode", 5, 40, 10),
-            simplifyThermostatTemperature("away_temperature", 0x8036, "Setpoint in away mode", 5, 40, 10),
-            simplifyThermostatTemperature("sleep_temperature", 0x803b, "Setpoint in sleep mode", 5, 40, 10),
-            simplifyThermostatTemperature(
+            simplifyThermostatExtend.enum("floor_sensor_type", 0x8037, simplifyThermostatSensorTypeLookup, "Type of floor sensor"),
+            simplifyThermostatExtend.enum("external_sensor_type", 0x8038, simplifyThermostatSensorTypeLookup, "Type of external sensor"),
+            simplifyThermostatExtend.enum(
+                "floor_sensor_brand",
+                0x805c,
+                simplifyThermostatSensorBrandLookup,
+                "Floor sensor brand (sensor type other_brand)",
+            ),
+            simplifyThermostatExtend.enum(
+                "external_sensor_brand",
+                0x805d,
+                simplifyThermostatSensorBrandLookup,
+                "External sensor brand (sensor type other_brand)",
+            ),
+            simplifyThermostatExtend.enum(
+                "floor_sensor_resistance",
+                0x805e,
+                simplifyThermostatSensorResistanceLookup,
+                "Floor sensor resistance (sensor type manual)",
+            ),
+            simplifyThermostatExtend.enum(
+                "external_sensor_resistance",
+                0x805f,
+                simplifyThermostatSensorResistanceLookup,
+                "External sensor resistance (sensor type manual)",
+            ),
+            simplifyThermostatExtend.temperature("home_temperature", 0x8039, "Setpoint in home mode", 5, 40, 10),
+            simplifyThermostatExtend.temperature("away_temperature", 0x8036, "Setpoint in away mode", 5, 40, 10),
+            simplifyThermostatExtend.temperature("sleep_temperature", 0x803b, "Setpoint in sleep mode", 5, 40, 10),
+            simplifyThermostatExtend.temperature("holiday_temperature", 0x8013, "Setpoint in holiday mode", 5, 40, 100),
+            simplifyThermostatExtend.temperature(
                 "floor_temperature_limit",
                 0x803c,
                 "Maximum floor temperature (only with custom floor protection type)",
@@ -3457,30 +3577,9 @@ export const definitions: DefinitionWithExtend[] = [
                 40,
                 10,
             ),
-            simplifyThermostatTemperature("hysteresis", 0x8045, "Hysteresis", 0.5, 5, 10),
-            simplifyThermostatEnum("floor_sensor_type", 0x8037, simplifyThermostatSensorTypeLookup, "Type of floor sensor"),
-            simplifyThermostatEnum("external_sensor_type", 0x8038, simplifyThermostatSensorTypeLookup, "Type of external sensor"),
-            simplifyThermostatEnum("floor_sensor_brand", 0x805c, simplifyThermostatSensorBrandLookup, "Floor sensor brand (sensor type other_brand)"),
-            simplifyThermostatEnum(
-                "external_sensor_brand",
-                0x805d,
-                simplifyThermostatSensorBrandLookup,
-                "External sensor brand (sensor type other_brand)",
-            ),
-            simplifyThermostatTemperature("temperature_lower_limit", 0x0005, "Lowest setpoint that can be selected", 5, 39.5, 100),
-            simplifyThermostatTemperature("temperature_upper_limit", 0x0004, "Highest setpoint that can be selected", 5.5, 40, 100),
-            simplifyThermostatEnum(
-                "floor_sensor_resistance",
-                0x805e,
-                simplifyThermostatSensorResistanceLookup,
-                "Floor sensor resistance (sensor type manual)",
-            ),
-            simplifyThermostatEnum(
-                "external_sensor_resistance",
-                0x805f,
-                simplifyThermostatSensorResistanceLookup,
-                "External sensor resistance (sensor type manual)",
-            ),
+            simplifyThermostatExtend.temperature("hysteresis", 0x8045, "Hysteresis", 0.5, 5, 10),
+            simplifyThermostatExtend.temperature("temperature_lower_limit", 0x0005, "Lowest setpoint that can be selected", 5, 39.5, 100),
+            simplifyThermostatExtend.temperature("temperature_upper_limit", 0x0004, "Highest setpoint that can be selected", 5.5, 40, 100),
             m.numeric({
                 name: "frost_protection_temperature",
                 cluster: "hvacThermostat",
@@ -3493,12 +3592,29 @@ export const definitions: DefinitionWithExtend[] = [
                 scale: 10,
                 entityCategory: "config",
             }),
-            simplifyThermostatNumber("active_backlight", 0x8005, Zcl.DataType.UINT8, "Display brightness when active", "%", 10, 100),
-            simplifyThermostatNumber("idle_backlight", 0x8034, Zcl.DataType.INT16, "Display brightness when idle", "%", 10, 100),
-            simplifyThermostatNumber("screen_on_time", 0x8029, Zcl.DataType.ENUM8, "Screen timeout, 0 = always on", "s", 0, 60),
-            simplifyThermostatNumber("regulator_cycle", 0x8007, Zcl.DataType.UINT8, "Power regulator cycle duration", "min", 1, 30),
-            simplifyThermostatNumber("regulator_percentage", 0x801d, Zcl.DataType.INT16, "Heating level in power regulator mode", "%", 10, 100, 10),
-            simplifyThermostatNumber("curing_time", 0x803a, Zcl.DataType.INT16, "Floor curing, heating is blocked while curing", "days", 0, 40),
+            simplifyThermostatExtend.number("active_backlight", 0x8005, Zcl.DataType.UINT8, "Display brightness when active", "%", 10, 100),
+            simplifyThermostatExtend.number("idle_backlight", 0x8034, Zcl.DataType.INT16, "Display brightness when idle", "%", 10, 100),
+            simplifyThermostatExtend.number("screen_on_time", 0x8029, Zcl.DataType.ENUM8, "Screen timeout, 0 = always on", "s", 0, 60),
+            simplifyThermostatExtend.number("regulator_cycle", 0x8007, Zcl.DataType.UINT8, "Power regulator cycle duration", "min", 1, 30),
+            simplifyThermostatExtend.number(
+                "regulator_percentage",
+                0x801d,
+                Zcl.DataType.INT16,
+                "Heating level in power regulator mode",
+                "%",
+                10,
+                100,
+                10,
+            ),
+            simplifyThermostatExtend.number(
+                "curing_time",
+                0x803a,
+                Zcl.DataType.INT16,
+                "Floor curing, heating is blocked while curing",
+                "days",
+                0,
+                40,
+            ),
             m.text({
                 name: "mcu_version",
                 cluster: "hvacThermostat",
@@ -3508,47 +3624,6 @@ export const definitions: DefinitionWithExtend[] = [
                 entityCategory: "diagnostic",
             }),
         ],
-        configure: async (device, coordinatorEndpoint) => {
-            const endpoint = device.getEndpoint(1);
-            // The binding table of this device is small (bind fails with TABLE_FULL), so bind the most
-            // important clusters first and never let a failing bind or reporting setup abort configure.
-            const steps: [string, () => Promise<unknown>][] = [
-                ["bind hvacThermostat", () => endpoint.bind("hvacThermostat", coordinatorEndpoint)],
-                ["bind genOnOff", () => endpoint.bind("genOnOff", coordinatorEndpoint)],
-                ["bind haElectricalMeasurement", () => endpoint.bind("haElectricalMeasurement", coordinatorEndpoint)],
-                ["bind seMetering", () => endpoint.bind("seMetering", coordinatorEndpoint)],
-                ["bind msRelativeHumidity", () => endpoint.bind("msRelativeHumidity", coordinatorEndpoint)],
-                ["report localTemp", () => reporting.thermostatTemperature(endpoint)],
-                ["report occupiedHeatingSetpoint", () => reporting.thermostatOccupiedHeatingSetpoint(endpoint)],
-                ["report pIHeatingDemand", () => reporting.thermostatPIHeatingDemand(endpoint)],
-                ["report systemMode", () => reporting.thermostatSystemMode(endpoint)],
-                ["report onOff", () => reporting.onOff(endpoint)],
-                ["report humidity", () => reporting.humidity(endpoint)],
-                ["read electrical scaling", () => reporting.readEletricalMeasurementMultiplierDivisors(endpoint)],
-                ["read metering scaling", () => reporting.readMeteringMultiplierDivisor(endpoint)],
-                ["report activePower", () => reporting.activePower(endpoint)],
-                ["report rmsCurrent", () => reporting.rmsCurrent(endpoint)],
-                ["report rmsVoltage", () => reporting.rmsVoltage(endpoint)],
-                ["report currentSummDelivered", () => reporting.currentSummDelivered(endpoint)],
-                ["read thermostat", () => endpoint.read("hvacThermostat", ["localTemp", "occupiedHeatingSetpoint", "systemMode", "runningState"])],
-                ["read thermostat 2", () => endpoint.read("hvacThermostat", ["localTemperatureCalibration", "pIHeatingDemand"])],
-                ["read onOff", () => endpoint.read("genOnOff", ["onOff"])],
-                ["read fault", () => endpoint.read("hvacThermostat", [0x8006])],
-                ["read display elements", () => endpoint.read("hvacThermostat", [0x8042, 0x8043])],
-            ];
-            for (const [name, step] of steps) {
-                try {
-                    await step();
-                } catch (error) {
-                    logger.warning(`4512795 configure: ${name} failed (${(error as Error).message})`, NS);
-                }
-            }
-            try {
-                await tzSimplifyThermostat.sync_time.convertSet(endpoint, "sync_time", "sync", undefined);
-            } catch (_e) {
-                // Time sync is best effort, don't fail configuration
-            }
-        },
     },
     {
         zigbeeModel: ["4512785"],
