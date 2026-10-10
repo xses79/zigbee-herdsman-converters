@@ -528,6 +528,15 @@ const tzLocalSimplifyDimmer4512791 = {
 const simplifyThermostatPresetLookup: KeyValue = {manual: 0, home: 1, away: 2, sleep: 3, holiday: 4};
 // hvacRelayState (0x0029) is vendor-defined as Work_state.
 const simplifyThermostatRunningStateLookup: KeyValue = {heat: 0x00, idle: 0x10};
+const simplifyThermostatErrors: Record<number, string> = {
+    1: "zigbee error",
+    2: "bluetooth error",
+    3: "internal sensor error",
+    4: "floor sensor error",
+    5: "external sensor error",
+    6: "overheat",
+    7: "overload",
+};
 const SIMPLIFY_EPOCH_OFFSET = 946684800; // ZCL UTCTime counts seconds from 2000-01-01
 
 // The device requests the time by setting Time_sync_flag (0x800A) to 1 (it repeats this every second while
@@ -569,8 +578,10 @@ const fzSimplifyThermostat = {
             }
             const fault = (data as KeyValue)[0x8006] as number | undefined;
             if (fault !== undefined) {
-                // Bit n is shown as error En on the display (bit 5 = E5 = external sensor missing).
-                const codes = [0, 1, 2, 3, 4, 5, 6, 7].filter((bit) => fault & (1 << bit)).map((bit) => `E${bit}`);
+                // Bit n is shown as ERRn on the display, see the error code table in the user manual.
+                const codes = [0, 1, 2, 3, 4, 5, 6, 7]
+                    .filter((bit) => fault & (1 << bit))
+                    .map((bit) => `ERR${bit}${simplifyThermostatErrors[bit] ? ` ${simplifyThermostatErrors[bit]}` : ""}`);
                 result.fault = codes.length ? codes.join(", ") : "none";
             }
             if ((data as KeyValue)[0x800a] === 1 && msg.type === "attributeReport") {
@@ -3307,14 +3318,11 @@ export const definitions: DefinitionWithExtend[] = [
                 .withPreset(Object.keys(simplifyThermostatPresetLookup))
                 .withLocalTemperature()
                 .withSetpoint("occupied_heating_setpoint", 5, 40, 0.5)
-                .withLocalTemperatureCalibration(-5, 5, 0.5)
+                .withLocalTemperatureCalibration(-10, 10, 0.5)
                 .withRunningState(["idle", "heat"])
                 .withPiHeatingDemand(),
             e.enum("sync_time", ea.SET, ["sync"]).withDescription("Synchronize the thermostat clock with the current time").withCategory("config"),
-            e
-                .text("fault", ea.STATE_GET)
-                .withDescription("Error codes shown on the display, e.g. E5 = external sensor missing")
-                .withCategory("diagnostic"),
+            e.text("fault", ea.STATE_GET).withDescription("Error codes shown on the display (ERR1-ERR7)").withCategory("diagnostic"),
             e.text("week_program_workdays", ea.STATE).withDescription("Week program for work days (time, temperature, mode)"),
             e.text("week_program_weekend", ea.STATE).withDescription("Week program for the weekend (time, temperature, mode)"),
         ],
@@ -3375,6 +3383,44 @@ export const definitions: DefinitionWithExtend[] = [
                 10,
             ),
             simplifyThermostatTemperature("hysteresis", 0x8045, "Hysteresis", 0.5, 5, 10),
+            simplifyThermostatTemperature("temperature_lower_limit", 0x0005, "Lowest setpoint that can be selected", 5, 39.5, 100),
+            simplifyThermostatTemperature("temperature_upper_limit", 0x0004, "Highest setpoint that can be selected", 5.5, 40, 100),
+            // Raw values until the value mapping is known (sensor type: no sensor, Namron, other brand, manual;
+            // brands: Namron 10K, Elko 10K, Heatit 10K, Schneider 10K, CTM 47K, Micromatic 12K, SG 12K).
+            ...(
+                [
+                    ["floor_sensor_type_raw", 0x8037],
+                    ["external_sensor_type_raw", 0x8038],
+                    ["floor_sensor_brand_raw", 0x805c],
+                    ["external_sensor_brand_raw", 0x805d],
+                    ["floor_sensor_resistance_raw", 0x805e],
+                    ["external_sensor_resistance_raw", 0x805f],
+                ] as const
+            ).map(([name, attribute]) =>
+                m.numeric({
+                    name,
+                    cluster: "hvacThermostat",
+                    attribute: {ID: attribute, type: Zcl.DataType.ENUM8},
+                    description: `Raw value of attribute 0x${attribute.toString(16)}`,
+                    access: "STATE_GET",
+                    entityCategory: "diagnostic",
+                }),
+            ),
+            ...(
+                [
+                    ["active_display_elements_raw", 0x8042],
+                    ["idle_display_elements_raw", 0x8043],
+                ] as const
+            ).map(([name, attribute]) =>
+                m.numeric({
+                    name,
+                    cluster: "hvacThermostat",
+                    attribute: {ID: attribute, type: Zcl.DataType.BITMAP8},
+                    description: `Raw value of attribute 0x${attribute.toString(16)}`,
+                    access: "STATE_GET",
+                    entityCategory: "diagnostic",
+                }),
+            ),
             m.numeric({
                 name: "frost_protection_temperature",
                 cluster: "hvacThermostat",
