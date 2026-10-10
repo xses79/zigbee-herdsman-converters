@@ -550,11 +550,11 @@ const fzSimplifyThermostat = {
                 result.pi_heating_demand = data.pIHeatingDemand;
             }
             if (data.systemMode !== undefined) {
-                const preset = utils.getKey(simplifyThermostatPresetLookup, data.systemMode, undefined, Number);
+                const preset = utils.getKey(simplifyThermostatPresetLookup, data.systemMode);
                 if (preset !== undefined) result.preset = preset;
             }
             if (data.runningState !== undefined) {
-                const runningState = utils.getKey(simplifyThermostatRunningStateLookup, data.runningState, undefined, Number);
+                const runningState = utils.getKey(simplifyThermostatRunningStateLookup, data.runningState);
                 if (runningState !== undefined) result.running_state = runningState;
             }
             return result;
@@ -569,6 +569,29 @@ const fzSimplifyThermostat = {
             }
         },
     } satisfies Fz.Converter<"genOnOff", undefined, ["attributeReport", "readResponse"]>,
+    // Week program cluster 0xE002 sends command 0x07 with a 32 byte octet string: 8 entries of
+    // [hour, minute, mode nibble << 4 | temperature high nibble, temperature low byte], temperature x10.
+    // The first 6 entries are for work days, the last 2 for the weekend.
+    week_program: {
+        cluster: 0xe002,
+        type: ["raw"],
+        convert: (model, msg, publish, options, meta) => {
+            const data: number[] = Array.from(msg.data);
+            const headerLength = data[0] & 0x04 ? 5 : 3;
+            if (data[headerLength - 1] !== 0x07) return;
+            const length = data[headerLength];
+            const payload = data.slice(headerLength + 1, headerLength + 1 + length);
+            if (payload.length !== 32) return;
+            const entries: string[] = [];
+            for (let i = 0; i < payload.length; i += 4) {
+                const [hour, minute, high, low] = payload.slice(i, i + 4);
+                const mode = utils.getKey(simplifyThermostatPresetLookup, high >> 4, "unknown");
+                const temperature = (((high & 0x0f) << 8) | low) / 10;
+                entries.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${temperature}C ${mode}`);
+            }
+            return {week_program_workdays: entries.slice(0, 6).join(", "), week_program_weekend: entries.slice(6).join(", ")};
+        },
+    } satisfies Fz.Converter<0xe002, undefined, ["raw"]>,
 };
 
 const tzSimplifyThermostat = {
@@ -3238,7 +3261,7 @@ export const definitions: DefinitionWithExtend[] = [
         description: "Simplify thermostat",
         whiteLabel: [{vendor: "Namron", model: "4512796", description: "Simplify thermostat (black)", fingerprint: [{modelID: "4512796"}]}],
         ota: true,
-        fromZigbee: [fzSimplifyThermostat.thermostat, fzSimplifyThermostat.system_mode],
+        fromZigbee: [fzSimplifyThermostat.thermostat, fzSimplifyThermostat.system_mode, fzSimplifyThermostat.week_program],
         toZigbee: [
             tzSimplifyThermostat.system_mode,
             tzSimplifyThermostat.preset,
@@ -3260,6 +3283,8 @@ export const definitions: DefinitionWithExtend[] = [
                 .withRunningState(["idle", "heat"])
                 .withPiHeatingDemand(),
             e.enum("sync_time", ea.SET, ["sync"]).withDescription("Synchronize the thermostat clock with the current time").withCategory("config"),
+            e.text("week_program_workdays", ea.STATE).withDescription("Week program for work days (time, temperature, mode)"),
+            e.text("week_program_weekend", ea.STATE).withDescription("Week program for the weekend (time, temperature, mode)"),
         ],
         extend: [
             m.identify(),
@@ -3276,7 +3301,6 @@ export const definitions: DefinitionWithExtend[] = [
             simplifyThermostatSwitch("window_open_check", 0x8000, "Enable open window detection"),
             simplifyThermostatSwitch("window_open", 0x8002, "Open window detected", "STATE_GET"),
             simplifyThermostatSwitch("frost_protection", 0x8001, "Enable frost protection"),
-            simplifyThermostatSwitch("frost_protection_active", 0x8061, "Frost protection currently active", "STATE_GET"),
             simplifyThermostatSwitch("auto_time", 0x8022, "Automatically set time"),
             simplifyThermostatSwitch("adaptive_function", 0x8035, "Adaptive heating"),
             simplifyThermostatSwitch("idle_screen", 0x803d, "Show idle screen"),
@@ -3376,7 +3400,9 @@ export const definitions: DefinitionWithExtend[] = [
                 ["report rmsCurrent", () => reporting.rmsCurrent(endpoint)],
                 ["report rmsVoltage", () => reporting.rmsVoltage(endpoint)],
                 ["report currentSummDelivered", () => reporting.currentSummDelivered(endpoint)],
-                ["read thermostat", () => endpoint.read("hvacThermostat", ["localTemperatureCalibration", "runningState"])],
+                ["read thermostat", () => endpoint.read("hvacThermostat", ["localTemp", "occupiedHeatingSetpoint", "systemMode", "runningState"])],
+                ["read thermostat 2", () => endpoint.read("hvacThermostat", ["localTemperatureCalibration", "pIHeatingDemand"])],
+                ["read onOff", () => endpoint.read("genOnOff", ["onOff"])],
             ];
             for (const [name, step] of steps) {
                 try {
