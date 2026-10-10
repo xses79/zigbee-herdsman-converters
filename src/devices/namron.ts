@@ -4,6 +4,7 @@ import * as fz from "../converters/fromZigbee";
 import * as tz from "../converters/toZigbee";
 import * as constants from "../lib/constants";
 import * as exposes from "../lib/exposes";
+import {logger} from "../lib/logger";
 import * as m from "../lib/modernExtend";
 import * as namron from "../lib/namron";
 import * as reporting from "../lib/reporting";
@@ -12,6 +13,7 @@ import * as tuya from "../lib/tuya";
 import type {DefinitionWithExtend, Fz, KeyValue, Tz} from "../lib/types";
 import * as utils from "../lib/utils";
 
+const NS = "zhc:namron";
 const ea = exposes.access;
 const e = exposes.presets;
 
@@ -3261,8 +3263,8 @@ export const definitions: DefinitionWithExtend[] = [
         ],
         extend: [
             m.identify(),
-            m.humidity(),
-            m.electricityMeter(),
+            m.humidity({reporting: false}),
+            m.electricityMeter({configureReporting: false}),
             m.binary({
                 name: "child_lock",
                 cluster: "hvacUserInterfaceCfg",
@@ -3354,13 +3356,35 @@ export const definitions: DefinitionWithExtend[] = [
         ],
         configure: async (device, coordinatorEndpoint) => {
             const endpoint = device.getEndpoint(1);
-            await reporting.bind(endpoint, coordinatorEndpoint, ["genOnOff", "hvacThermostat"]);
-            await reporting.onOff(endpoint);
-            await reporting.thermostatTemperature(endpoint);
-            await reporting.thermostatOccupiedHeatingSetpoint(endpoint);
-            await reporting.thermostatPIHeatingDemand(endpoint);
-            await reporting.thermostatSystemMode(endpoint);
-            await endpoint.read("hvacThermostat", ["localTemperatureCalibration", "runningState"]);
+            // The binding table of this device is small (bind fails with TABLE_FULL), so bind the most
+            // important clusters first and never let a failing bind or reporting setup abort configure.
+            const steps: [string, () => Promise<unknown>][] = [
+                ["bind hvacThermostat", () => endpoint.bind("hvacThermostat", coordinatorEndpoint)],
+                ["bind genOnOff", () => endpoint.bind("genOnOff", coordinatorEndpoint)],
+                ["bind haElectricalMeasurement", () => endpoint.bind("haElectricalMeasurement", coordinatorEndpoint)],
+                ["bind seMetering", () => endpoint.bind("seMetering", coordinatorEndpoint)],
+                ["bind msRelativeHumidity", () => endpoint.bind("msRelativeHumidity", coordinatorEndpoint)],
+                ["report localTemp", () => reporting.thermostatTemperature(endpoint)],
+                ["report occupiedHeatingSetpoint", () => reporting.thermostatOccupiedHeatingSetpoint(endpoint)],
+                ["report pIHeatingDemand", () => reporting.thermostatPIHeatingDemand(endpoint)],
+                ["report systemMode", () => reporting.thermostatSystemMode(endpoint)],
+                ["report onOff", () => reporting.onOff(endpoint)],
+                ["report humidity", () => reporting.humidity(endpoint)],
+                ["read electrical scaling", () => reporting.readEletricalMeasurementMultiplierDivisors(endpoint)],
+                ["read metering scaling", () => reporting.readMeteringMultiplierDivisor(endpoint)],
+                ["report activePower", () => reporting.activePower(endpoint)],
+                ["report rmsCurrent", () => reporting.rmsCurrent(endpoint)],
+                ["report rmsVoltage", () => reporting.rmsVoltage(endpoint)],
+                ["report currentSummDelivered", () => reporting.currentSummDelivered(endpoint)],
+                ["read thermostat", () => endpoint.read("hvacThermostat", ["localTemperatureCalibration", "runningState"])],
+            ];
+            for (const [name, step] of steps) {
+                try {
+                    await step();
+                } catch (error) {
+                    logger.warning(`4512795 configure: ${name} failed (${(error as Error).message})`, NS);
+                }
+            }
             try {
                 await tzSimplifyThermostat.sync_time.convertSet(endpoint, "sync_time", "sync", undefined);
             } catch (_e) {
