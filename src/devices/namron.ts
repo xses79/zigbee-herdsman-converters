@@ -528,6 +528,7 @@ const tzLocalSimplifyDimmer4512791 = {
 const simplifyThermostatPresetLookup: KeyValue = {manual: 0, home: 1, away: 2, sleep: 3, holiday: 4};
 // hvacRelayState (0x0029) is vendor-defined as Work_state.
 const simplifyThermostatRunningStateLookup: KeyValue = {heat: 0x00, idle: 0x10};
+const simplifyThermostatSensorTypeLookup: KeyValue = {namron: 0, other_brand: 1, manual: 2, no_sensor: 255};
 const simplifyThermostatErrors: Record<number, string> = {
     1: "zigbee error",
     2: "bluetooth error",
@@ -3367,7 +3368,8 @@ export const definitions: DefinitionWithExtend[] = [
             simplifyThermostatEnum(
                 "floor_protection_type",
                 0x8046,
-                {none: 0, wood: 1, stone: 2, custom: 3},
+                // 4 is set by the device itself when no floor sensor is configured.
+                {none: 0, wood: 1, stone: 2, custom: 3, no_floor_sensor: 4},
                 "Floor type, determines the floor temperature limit",
             ),
             simplifyThermostatTemperature("holiday_temperature", 0x8013, "Setpoint in holiday mode", 5, 40, 100),
@@ -3383,14 +3385,14 @@ export const definitions: DefinitionWithExtend[] = [
                 10,
             ),
             simplifyThermostatTemperature("hysteresis", 0x8045, "Hysteresis", 0.5, 5, 10),
+            simplifyThermostatEnum("floor_sensor_type", 0x8037, simplifyThermostatSensorTypeLookup, "Type of floor sensor"),
+            simplifyThermostatEnum("external_sensor_type", 0x8038, simplifyThermostatSensorTypeLookup, "Type of external sensor"),
             simplifyThermostatTemperature("temperature_lower_limit", 0x0005, "Lowest setpoint that can be selected", 5, 39.5, 100),
             simplifyThermostatTemperature("temperature_upper_limit", 0x0004, "Highest setpoint that can be selected", 5.5, 40, 100),
             // Raw values until the value mapping is known (sensor type: no sensor, Namron, other brand, manual;
             // brands: Namron 10K, Elko 10K, Heatit 10K, Schneider 10K, CTM 47K, Micromatic 12K, SG 12K).
             ...(
                 [
-                    ["floor_sensor_type_raw", 0x8037],
-                    ["external_sensor_type_raw", 0x8038],
                     ["floor_sensor_brand_raw", 0x805c],
                     ["external_sensor_brand_raw", 0x805d],
                     ["floor_sensor_resistance_raw", 0x805e],
