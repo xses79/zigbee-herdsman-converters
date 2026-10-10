@@ -559,14 +559,14 @@ const simplifyThermostatErrors: Record<number, string> = {
     6: "overheat",
     7: "overload",
 };
-const SIMPLIFY_EPOCH_OFFSET = 946684800; // ZCL UTCTime counts seconds from 2000-01-01
 
 // The device requests the time by setting Time_sync_flag (0x800A) to 1 (it repeats this every second while
 // Auto_time is on). Answer by writing Time_sync_value (0x800B) and clearing the flag, same as the Edge thermostat.
 // biome-ignore lint/suspicious/noExplicitAny: endpoint type is complex generic
 async function simplifySyncTime(endpoint: any): Promise<void> {
-    // The thermostat shows the received time as is, so send local time instead of UTC.
-    const ts = Math.round(Date.now() / 1000) - SIMPLIFY_EPOCH_OFFSET - new Date().getTimezoneOffset() * 60;
+    // Unix timestamp (seconds since 1970, a 2000 based value showed year 2096 on the display) in local time,
+    // since the thermostat shows the received time as is.
+    const ts = Math.round(Date.now() / 1000) - new Date().getTimezoneOffset() * 60;
     await endpoint.write("hvacThermostat", {[0x800b]: {value: ts, type: Zcl.DataType.UINT32}});
     await endpoint.write("hvacThermostat", {[0x800a]: {value: 0, type: Zcl.DataType.BOOLEAN}});
 }
