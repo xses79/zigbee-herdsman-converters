@@ -547,6 +547,9 @@ const simplifyThermostatSensorResistanceLookup: KeyValue = {
     "47k": 6,
     "100k": 7,
 };
+// Bits of Active_display_elements (0x8042) and Idle_display_elements (0x8043), in display menu order.
+const simplifyThermostatDisplayElements = ["humidity", "time", "day", "date", "setpoint", "connection"];
+const simplifyThermostatDisplayAttributes = {active: 0x8042, idle: 0x8043} as const;
 const simplifyThermostatErrors: Record<number, string> = {
     1: "zigbee error",
     2: "bluetooth error",
@@ -594,6 +597,14 @@ const fzSimplifyThermostat = {
             if (data.runningState !== undefined) {
                 const runningState = utils.getKey(simplifyThermostatRunningStateLookup, data.runningState);
                 if (runningState !== undefined) result.running_state = runningState;
+            }
+            for (const [screen, attribute] of Object.entries(simplifyThermostatDisplayAttributes)) {
+                const elements = (data as KeyValue)[attribute] as number | undefined;
+                if (elements !== undefined) {
+                    simplifyThermostatDisplayElements.forEach((element, bit) => {
+                        result[`${screen}_display_${element}`] = elements & (1 << bit) ? "ON" : "OFF";
+                    });
+                }
             }
             const fault = (data as KeyValue)[0x8006] as number | undefined;
             if (fault !== undefined) {
@@ -668,6 +679,26 @@ const tzSimplifyThermostat = {
         },
         convertGet: async (entity, key, meta) => {
             await entity.read("hvacThermostat", ["systemMode"]);
+        },
+    } satisfies Tz.Converter,
+    display_elements: {
+        key: Object.keys(simplifyThermostatDisplayAttributes).flatMap((screen) =>
+            simplifyThermostatDisplayElements.map((element) => `${screen}_display_${element}`),
+        ),
+        convertSet: async (entity, key, value, meta) => {
+            utils.validateValue(value, ["ON", "OFF"]);
+            const [screen, , element] = key.split("_") as [keyof typeof simplifyThermostatDisplayAttributes, string, string];
+            const attribute = simplifyThermostatDisplayAttributes[screen];
+            const bit = simplifyThermostatDisplayElements.indexOf(element);
+            // Read-modify-write so the other elements on the same screen are kept.
+            const current = ((await entity.read("hvacThermostat", [attribute])) as KeyValue)[attribute] as number;
+            const elements = value === "ON" ? current | (1 << bit) : current & ~(1 << bit);
+            await entity.write("hvacThermostat", {[attribute]: {value: elements, type: Zcl.DataType.BITMAP8}});
+            return {state: {[key]: value}};
+        },
+        convertGet: async (entity, key, meta) => {
+            const screen = key.split("_")[0] as keyof typeof simplifyThermostatDisplayAttributes;
+            await entity.read("hvacThermostat", [simplifyThermostatDisplayAttributes[screen]]);
         },
     } satisfies Tz.Converter,
     fault: {
@@ -3324,6 +3355,7 @@ export const definitions: DefinitionWithExtend[] = [
             tzSimplifyThermostat.preset,
             tzSimplifyThermostat.sync_time,
             tzSimplifyThermostat.fault,
+            tzSimplifyThermostat.display_elements,
             tz.thermostat_local_temperature,
             tz.thermostat_local_temperature_calibration,
             tz.thermostat_occupied_heating_setpoint,
@@ -3342,6 +3374,14 @@ export const definitions: DefinitionWithExtend[] = [
                 .withPiHeatingDemand(),
             e.enum("sync_time", ea.SET, ["sync"]).withDescription("Synchronize the thermostat clock with the current time").withCategory("config"),
             e.text("fault", ea.STATE_GET).withDescription("Error codes shown on the display (ERR1-ERR7)").withCategory("diagnostic"),
+            ...Object.keys(simplifyThermostatDisplayAttributes).flatMap((screen) =>
+                simplifyThermostatDisplayElements.map((element) =>
+                    e
+                        .binary(`${screen}_display_${element}`, ea.ALL, "ON", "OFF")
+                        .withDescription(`Show ${element} on the ${screen} screen`)
+                        .withCategory("config"),
+                ),
+            ),
             e.text("week_program_workdays", ea.STATE).withDescription("Week program for work days (time, temperature, mode)"),
             e.text("week_program_weekend", ea.STATE).withDescription("Week program for the weekend (time, temperature, mode)"),
         ],
@@ -3426,21 +3466,6 @@ export const definitions: DefinitionWithExtend[] = [
                 simplifyThermostatSensorResistanceLookup,
                 "External sensor resistance (sensor type manual)",
             ),
-            ...(
-                [
-                    ["active_display_elements_raw", 0x8042],
-                    ["idle_display_elements_raw", 0x8043],
-                ] as const
-            ).map(([name, attribute]) =>
-                m.numeric({
-                    name,
-                    cluster: "hvacThermostat",
-                    attribute: {ID: attribute, type: Zcl.DataType.BITMAP8},
-                    description: `Raw value of attribute 0x${attribute.toString(16)}`,
-                    access: "STATE_GET",
-                    entityCategory: "diagnostic",
-                }),
-            ),
             m.numeric({
                 name: "frost_protection_temperature",
                 cluster: "hvacThermostat",
@@ -3494,6 +3519,7 @@ export const definitions: DefinitionWithExtend[] = [
                 ["read thermostat 2", () => endpoint.read("hvacThermostat", ["localTemperatureCalibration", "pIHeatingDemand"])],
                 ["read onOff", () => endpoint.read("genOnOff", ["onOff"])],
                 ["read fault", () => endpoint.read("hvacThermostat", [0x8006])],
+                ["read display elements", () => endpoint.read("hvacThermostat", [0x8042, 0x8043])],
             ];
             for (const [name, step] of steps) {
                 try {
