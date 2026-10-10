@@ -529,6 +529,14 @@ const simplifyThermostatPresetLookup: KeyValue = {manual: 0, home: 1, away: 2, s
 // hvacRelayState (0x0029) is vendor-defined as Work_state.
 const simplifyThermostatRunningStateLookup: KeyValue = {heat: 0x00, idle: 0x10};
 const simplifyThermostatSensorTypeLookup: KeyValue = {namron: 0, other_brand: 1, manual: 2, no_sensor: 255};
+const simplifyThermostatSensorBrandLookup: KeyValue = {
+    ctm_47k: 0,
+    elko_10k: 1,
+    heatit_10k: 2,
+    micromatic_12k: 3,
+    sg_12k: 4,
+    schneider_10k: 5,
+};
 const simplifyThermostatErrors: Record<number, string> = {
     1: "zigbee error",
     2: "bluetooth error",
@@ -3387,14 +3395,19 @@ export const definitions: DefinitionWithExtend[] = [
             simplifyThermostatTemperature("hysteresis", 0x8045, "Hysteresis", 0.5, 5, 10),
             simplifyThermostatEnum("floor_sensor_type", 0x8037, simplifyThermostatSensorTypeLookup, "Type of floor sensor"),
             simplifyThermostatEnum("external_sensor_type", 0x8038, simplifyThermostatSensorTypeLookup, "Type of external sensor"),
+            simplifyThermostatEnum("floor_sensor_brand", 0x805c, simplifyThermostatSensorBrandLookup, "Floor sensor brand (sensor type other_brand)"),
+            simplifyThermostatEnum(
+                "external_sensor_brand",
+                0x805d,
+                simplifyThermostatSensorBrandLookup,
+                "External sensor brand (sensor type other_brand)",
+            ),
             simplifyThermostatTemperature("temperature_lower_limit", 0x0005, "Lowest setpoint that can be selected", 5, 39.5, 100),
             simplifyThermostatTemperature("temperature_upper_limit", 0x0004, "Highest setpoint that can be selected", 5.5, 40, 100),
             // Raw values until the value mapping is known (sensor type: no sensor, Namron, other brand, manual;
             // brands: Namron 10K, Elko 10K, Heatit 10K, Schneider 10K, CTM 47K, Micromatic 12K, SG 12K).
             ...(
                 [
-                    ["floor_sensor_brand_raw", 0x805c],
-                    ["external_sensor_brand_raw", 0x805d],
                     ["floor_sensor_resistance_raw", 0x805e],
                     ["external_sensor_resistance_raw", 0x805f],
                 ] as const
