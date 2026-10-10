@@ -537,6 +537,16 @@ const simplifyThermostatSensorBrandLookup: KeyValue = {
     sg_12k: 4,
     schneider_10k: 5,
 };
+const simplifyThermostatSensorResistanceLookup: KeyValue = {
+    "6.8k": 0,
+    "10k": 1,
+    "12k": 2,
+    "15k": 3,
+    "22k": 4,
+    "33k": 5,
+    "47k": 6,
+    "100k": 7,
+};
 const simplifyThermostatErrors: Record<number, string> = {
     1: "zigbee error",
     2: "bluetooth error",
@@ -3404,22 +3414,17 @@ export const definitions: DefinitionWithExtend[] = [
             ),
             simplifyThermostatTemperature("temperature_lower_limit", 0x0005, "Lowest setpoint that can be selected", 5, 39.5, 100),
             simplifyThermostatTemperature("temperature_upper_limit", 0x0004, "Highest setpoint that can be selected", 5.5, 40, 100),
-            // Raw values until the value mapping is known (sensor type: no sensor, Namron, other brand, manual;
-            // brands: Namron 10K, Elko 10K, Heatit 10K, Schneider 10K, CTM 47K, Micromatic 12K, SG 12K).
-            ...(
-                [
-                    ["floor_sensor_resistance_raw", 0x805e],
-                    ["external_sensor_resistance_raw", 0x805f],
-                ] as const
-            ).map(([name, attribute]) =>
-                m.numeric({
-                    name,
-                    cluster: "hvacThermostat",
-                    attribute: {ID: attribute, type: Zcl.DataType.ENUM8},
-                    description: `Raw value of attribute 0x${attribute.toString(16)}`,
-                    access: "STATE_GET",
-                    entityCategory: "diagnostic",
-                }),
+            simplifyThermostatEnum(
+                "floor_sensor_resistance",
+                0x805e,
+                simplifyThermostatSensorResistanceLookup,
+                "Floor sensor resistance (sensor type manual)",
+            ),
+            simplifyThermostatEnum(
+                "external_sensor_resistance",
+                0x805f,
+                simplifyThermostatSensorResistanceLookup,
+                "External sensor resistance (sensor type manual)",
             ),
             ...(
                 [
