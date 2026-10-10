@@ -530,6 +530,15 @@ const simplifyThermostatPresetLookup: KeyValue = {manual: 0, home: 1, away: 2, s
 const simplifyThermostatRunningStateLookup: KeyValue = {heat: 0x00, idle: 0x10};
 const SIMPLIFY_EPOCH_OFFSET = 946684800; // ZCL UTCTime counts seconds from 2000-01-01
 
+// The device requests the time by setting Time_sync_flag (0x800A) to 1 (it repeats this every second while
+// Auto_time is on). Answer by writing Time_sync_value (0x800B) and clearing the flag, same as the Edge thermostat.
+// biome-ignore lint/suspicious/noExplicitAny: endpoint type is complex generic
+async function simplifySyncTime(endpoint: any): Promise<void> {
+    const ts = Math.round(Date.now() / 1000) - SIMPLIFY_EPOCH_OFFSET;
+    await endpoint.write("hvacThermostat", {[0x800b]: {value: ts, type: Zcl.DataType.UINT32}});
+    await endpoint.write("hvacThermostat", {[0x800a]: {value: 0, type: Zcl.DataType.BOOLEAN}});
+}
+
 const fzSimplifyThermostat = {
     thermostat: {
         cluster: "hvacThermostat",
@@ -556,6 +565,13 @@ const fzSimplifyThermostat = {
             if (data.runningState !== undefined) {
                 const runningState = utils.getKey(simplifyThermostatRunningStateLookup, data.runningState);
                 if (runningState !== undefined) result.running_state = runningState;
+            }
+            if ((data as KeyValue)[0x800a] === 1 && msg.type === "attributeReport") {
+                const last = store.getValue(meta.device, "simplify_time_sync", 0) as number;
+                if (Date.now() - last > 10000) {
+                    store.putValue(meta.device, "simplify_time_sync", Date.now());
+                    simplifySyncTime(msg.endpoint).catch((error) => logger.warning(`4512795 time sync failed (${(error as Error).message})`, NS));
+                }
             }
             return result;
         },
@@ -620,9 +636,7 @@ const tzSimplifyThermostat = {
     sync_time: {
         key: ["sync_time"],
         convertSet: async (entity, key, value, meta) => {
-            const ts = Math.round(Date.now() / 1000) - SIMPLIFY_EPOCH_OFFSET;
-            await entity.write("hvacThermostat", {[0x800b]: {value: ts, type: Zcl.DataType.UINT32}});
-            await entity.write("hvacThermostat", {[0x800a]: {value: 1, type: Zcl.DataType.BOOLEAN}});
+            await simplifySyncTime(entity);
             return {};
         },
     } satisfies Tz.Converter,
