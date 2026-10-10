@@ -534,7 +534,8 @@ const SIMPLIFY_EPOCH_OFFSET = 946684800; // ZCL UTCTime counts seconds from 2000
 // Auto_time is on). Answer by writing Time_sync_value (0x800B) and clearing the flag, same as the Edge thermostat.
 // biome-ignore lint/suspicious/noExplicitAny: endpoint type is complex generic
 async function simplifySyncTime(endpoint: any): Promise<void> {
-    const ts = Math.round(Date.now() / 1000) - SIMPLIFY_EPOCH_OFFSET;
+    // The thermostat shows the received time as is, so send local time instead of UTC.
+    const ts = Math.round(Date.now() / 1000) - SIMPLIFY_EPOCH_OFFSET - new Date().getTimezoneOffset() * 60;
     await endpoint.write("hvacThermostat", {[0x800b]: {value: ts, type: Zcl.DataType.UINT32}});
     await endpoint.write("hvacThermostat", {[0x800a]: {value: 0, type: Zcl.DataType.BOOLEAN}});
 }
@@ -565,6 +566,12 @@ const fzSimplifyThermostat = {
             if (data.runningState !== undefined) {
                 const runningState = utils.getKey(simplifyThermostatRunningStateLookup, data.runningState);
                 if (runningState !== undefined) result.running_state = runningState;
+            }
+            const fault = (data as KeyValue)[0x8006] as number | undefined;
+            if (fault !== undefined) {
+                // Bit n is shown as error En on the display (bit 5 = E5 = external sensor missing).
+                const codes = [0, 1, 2, 3, 4, 5, 6, 7].filter((bit) => fault & (1 << bit)).map((bit) => `E${bit}`);
+                result.fault = codes.length ? codes.join(", ") : "none";
             }
             if ((data as KeyValue)[0x800a] === 1 && msg.type === "attributeReport") {
                 const last = store.getValue(meta.device, "simplify_time_sync", 0) as number;
@@ -631,6 +638,12 @@ const tzSimplifyThermostat = {
         },
         convertGet: async (entity, key, meta) => {
             await entity.read("hvacThermostat", ["systemMode"]);
+        },
+    } satisfies Tz.Converter,
+    fault: {
+        key: ["fault"],
+        convertGet: async (entity, key, meta) => {
+            await entity.read("hvacThermostat", [0x8006]);
         },
     } satisfies Tz.Converter,
     sync_time: {
@@ -3280,6 +3293,7 @@ export const definitions: DefinitionWithExtend[] = [
             tzSimplifyThermostat.system_mode,
             tzSimplifyThermostat.preset,
             tzSimplifyThermostat.sync_time,
+            tzSimplifyThermostat.fault,
             tz.thermostat_local_temperature,
             tz.thermostat_local_temperature_calibration,
             tz.thermostat_occupied_heating_setpoint,
@@ -3297,6 +3311,10 @@ export const definitions: DefinitionWithExtend[] = [
                 .withRunningState(["idle", "heat"])
                 .withPiHeatingDemand(),
             e.enum("sync_time", ea.SET, ["sync"]).withDescription("Synchronize the thermostat clock with the current time").withCategory("config"),
+            e
+                .text("fault", ea.STATE_GET)
+                .withDescription("Error codes shown on the display, e.g. E5 = external sensor missing")
+                .withCategory("diagnostic"),
             e.text("week_program_workdays", ea.STATE).withDescription("Week program for work days (time, temperature, mode)"),
             e.text("week_program_weekend", ea.STATE).withDescription("Week program for the weekend (time, temperature, mode)"),
         ],
@@ -3375,14 +3393,6 @@ export const definitions: DefinitionWithExtend[] = [
             simplifyThermostatNumber("regulator_cycle", 0x8007, Zcl.DataType.UINT8, "Power regulator cycle duration", "min", 1, 30),
             simplifyThermostatNumber("regulator_percentage", 0x801d, Zcl.DataType.INT16, "Heating level in power regulator mode", "%", 10, 100, 10),
             simplifyThermostatNumber("curing_time", 0x803a, Zcl.DataType.INT16, "Floor curing, heating is blocked while curing", "days", 0, 40),
-            m.numeric({
-                name: "fault",
-                cluster: "hvacThermostat",
-                attribute: {ID: 0x8006, type: Zcl.DataType.BITMAP8},
-                description: "Fault bits (sensor, communication, over temperature, overload)",
-                access: "STATE_GET",
-                entityCategory: "diagnostic",
-            }),
             m.text({
                 name: "mcu_version",
                 cluster: "hvacThermostat",
@@ -3417,6 +3427,7 @@ export const definitions: DefinitionWithExtend[] = [
                 ["read thermostat", () => endpoint.read("hvacThermostat", ["localTemp", "occupiedHeatingSetpoint", "systemMode", "runningState"])],
                 ["read thermostat 2", () => endpoint.read("hvacThermostat", ["localTemperatureCalibration", "pIHeatingDemand"])],
                 ["read onOff", () => endpoint.read("genOnOff", ["onOff"])],
+                ["read fault", () => endpoint.read("hvacThermostat", [0x8006])],
             ];
             for (const [name, step] of steps) {
                 try {
