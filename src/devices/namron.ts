@@ -531,8 +531,8 @@ const tzLocalSimplifyDimmer4512791 = {
     start_brightness: {
         key: ["start_brightness"],
         convertSet: async (entity: TzEntity, key: string, value: unknown, meta: TzMeta) => {
-            const lvl = sdClamp(Math.round(Number(value)), 1, 254);
-            if (!Number.isFinite(lvl)) throw new Error("start_brightness must be 1..254");
+            const lvl = sdClamp(Math.round(Number(value)), 1, 255);
+            if (!Number.isFinite(lvl)) throw new Error("start_brightness must be 1..254, or 255 for previous");
             await entity.write("genLevelCtrl", {[0x0011]: {value: lvl, type: 0x20}}, {disableDefaultResponse: true});
             return {state: {start_brightness: lvl}};
         },
@@ -1992,11 +1992,8 @@ export const definitions: DefinitionWithExtend[] = [
                 .numeric("alarm_airtemp_overvalue", ea.ALL)
                 .withUnit("°C")
                 .withValueMin(0)
-                .withValueMax(35)
-                .withDescription(
-                    "Floor temperature over heating threshold, range is 0-35, unit is 1ºC, " +
-                        "0 means this function is disabled, default value is 27.",
-                ),
+                .withValueMax(60)
+                .withDescription("Room temperature alarm threshold, up to 60 °C in steps of 1 °C. 0 means this function is disabled. Default: 45."),
         ],
         // Device does not asks for the time with binding, therefore we write the time every 24 hours
         extend: [m.writeTimeDaily({endpointId: 1}), namron.namronExtend.addNamronHvacThermostat2Cluster()],
@@ -3096,7 +3093,7 @@ export const definitions: DefinitionWithExtend[] = [
                 attribute: {ID: 0xa008, type: 0x20},
                 description: "genLevelCtrl 0xA008 (moveratezigbee).",
                 valueMin: 0,
-                valueMax: 30,
+                valueMax: 255,
                 access: "ALL",
                 entityCategory: "config",
                 zigbeeCommandOptions: {disableDefaultResponse: true},
@@ -3325,8 +3322,9 @@ export const definitions: DefinitionWithExtend[] = [
             exposes
                 .numeric("start_brightness", ea.ALL)
                 .withValueMin(1)
-                .withValueMax(254)
-                .withDescription("Default brightness at power-on/startup (1–254). Written to device onLevel (0x0011).")
+                .withValueMax(255)
+                .withPreset("previous", 255, "Use the brightness from before the light was turned off")
+                .withDescription("Default brightness at power-on/startup (1–254, or 255 for previous). Written to device onLevel (0x0011).")
                 .withCategory("config"),
             exposes
                 .enum("startup_on_off", ea.ALL, ["off", "on", "toggle", "previous"])
